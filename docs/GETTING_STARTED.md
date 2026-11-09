@@ -56,9 +56,11 @@ demanda. Para mudar um ponto já inserido, selecione-o e abra o **Inspetor de at
    circuito. Enter termina. A mini-barra edita descrição, esquema e tensão.
 3. **Os comandos:** clique em **Comandos e luminárias** (`ELECOMANDO`). A mini-barra já traz a próxima letra livre
    (`Comando atual:`) e conta o que você clicou. Clique nos interruptores e nas luminárias do comando, em qualquer ordem
-   (um segundo clique tira), e tecle Enter ou **Confirmar comando**: um interruptor vira simples, dois viram paralelos
-   (three-way) e três ou mais ficam paralelos nas pontas e intermediários (four-way) no meio, na ordem dos cliques. A
-   letra avança sozinha para o próximo comando; Enter sem nada clicado ou **Sair (ESC)** termina. Para editar um comando,
+   (um segundo clique tira), e tecle Enter ou **Confirmar comando**. O esquema vem do tipo de cada bloco
+   (`TIPO_INTERRUPTOR` ou a família), que o comando não muda: um interruptor simples comanda sozinho; com mais de um,
+   os dois **paralelos** (three-way) ficam nas pontas, o clicado primeiro recebe a fase, e os **intermediários**
+   (four-way) sempre no meio. Um grupo que não fecha (um simples junto de outros, um paralelo sozinho, um intermediário
+   sem os dois paralelos) aparece em destaque na mini-barra e não é gravado. A letra avança sozinha para o próximo comando; Enter sem nada clicado ou **Sair (ESC)** termina. Para editar um comando,
    escolha-o em **Editar...** ou digite a letra dele. A letra nunca repete no projeto (ou no quadro, nas Configurações >
    Geral); depois do `z` vêm `aa`, `bb`... ou `a1`, `b1`...
 4. **O quadro de cargas:** **Quadro de cargas...** (`ELECARGAS`) abre o quadro embaixo do desenho, com as fases, os grupos de

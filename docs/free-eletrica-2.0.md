@@ -446,5 +446,6 @@ Ajustes de interface e de prancha:
   do `z` (`aa`, `bb`... ou `a1`, `b1`...).
 - O ELECOMANDO ficou contínuo, com mini-barra: o comando atual (a letra livre, ou um em uso para editar), a contagem do
   que foi clicado com o esquema, e Confirmar (Enter), Limpar seleção e Sair (ESC). Interruptores e luminárias em qualquer
-  ordem; 1 interruptor simples, 2 paralelos, 3 ou mais paralelos nas pontas e intermediários no meio.
+  ordem. O esquema vem do tipo de cada bloco, que o comando não muda: simples só sozinho; num grupo, dois paralelos nas
+  pontas (o clicado primeiro recebe a fase) e os intermediários sempre no meio. Um grupo que não fecha é recusado.
 - No unifilar, a curva do disjuntor geral foi para a linha da corrente: embaixo dele ficava em cima do texto do DPS.

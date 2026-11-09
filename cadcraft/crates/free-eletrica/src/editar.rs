@@ -524,37 +524,90 @@ pub fn papel_do_interruptor(p: &crate::PontoEletrico, letra: &str) -> Option<Pap
     p.extras.iter().find(|(k, _)| k.eq_ignore_ascii_case(&chave)).and_then(|(_, v)| PapelInterruptor::de_codigo(v))
 }
 
-/// Os papéis dos interruptores de um comando, na ordem do caminho dos retornos. Sozinho, o interruptor é
-/// simples. Em grupo, os intermediários ficam no meio e os outros (paralelos, ou simples usados como
-/// paralelos) nas pontas, na ordem dada: o primeiro é o início, que recebe a fase, e o último o fim, de onde
-/// sai o retorno às luminárias.
-pub fn papeis(doc: &Drawing, interruptores: &[Handle]) -> Vec<(Handle, PapelInterruptor)> {
+/// Os papéis dos interruptores de um comando, na ordem do caminho dos retornos. Quem manda é o tipo do bloco
+/// (`TIPO_INTERRUPTOR` ou a família), que o comando não muda: o simples só comanda sozinho; um comando com
+/// mais de um interruptor tem dois paralelos nas pontas e, entre eles, os intermediários. A ordem dos cliques
+/// só escolhe qual paralelo é o início (o primeiro clicado, que recebe a fase) e a ordem dos intermediários. Um
+/// bloco sem o tipo segue a posição: sozinho é simples; num grupo, completa as pontas e depois o meio. Um grupo
+/// que não fecha o esquema é recusado.
+pub fn papeis(doc: &Drawing, interruptores: &[Handle]) -> Result<Vec<(Handle, PapelInterruptor)>, String> {
+    papeis_na_analise(&crate::analisar(doc), interruptores)
+}
+
+/// [`papeis`] com o desenho já analisado.
+pub fn papeis_na_analise(analise: &crate::Analise, interruptores: &[Handle]) -> Result<Vec<(Handle, PapelInterruptor)>, String> {
+    use crate::ponto::TipoInterruptor as T;
     let mut lista: Vec<Handle> = Vec::new();
     for h in interruptores {
         if !lista.contains(h) {
             lista.push(*h);
         }
     }
-    if let [so] = lista.as_slice() {
-        return vec![(*so, PapelInterruptor::Simples)];
+    let ponto = |h: &Handle| analise.ponto(*h).filter(|p| p.tipo == crate::TipoPonto::Interruptor);
+    let rotulo = |h: &Handle| ponto(h).map_or_else(|| h.hex(), |p| p.rotulo());
+    let tipo = |h: &Handle| -> Result<Option<T>, String> {
+        ponto(h).map(|p| p.tipo_interruptor).ok_or_else(|| format!("o objeto {} não é um interruptor", h.hex()))
+    };
+    let mut paralelos: Vec<Handle> = Vec::new();
+    let mut intermediarios: Vec<Handle> = Vec::new();
+    let mut sem_tipo: Vec<Handle> = Vec::new();
+    for h in &lista {
+        match tipo(h)? {
+            Some(t) if t.intermediario() => intermediarios.push(*h),
+            Some(t) if t.paralelo() => paralelos.push(*h),
+            Some(_) if lista.len() > 1 => {
+                return Err(format!(
+                    "{} é um interruptor simples: um comando com mais de um interruptor usa dois paralelos e, entre eles, intermediários",
+                    rotulo(h)
+                ));
+            }
+            Some(_) => {}
+            None => sem_tipo.push(*h),
+        }
     }
-    let intermediario = |h: &Handle| ler_ponto(doc, *h).and_then(|p| p.tipo_interruptor).is_some_and(|t| t.intermediario());
-    let pontas: Vec<Handle> = lista.iter().copied().filter(|h| !intermediario(h)).collect();
-    let meio: Vec<Handle> = lista.iter().copied().filter(intermediario).collect();
-    let mut v = Vec::new();
-    if let Some(primeiro) = pontas.first() {
-        v.push((*primeiro, PapelInterruptor::InicioParalelo));
+    match lista.as_slice() {
+        [] => return Err("selecione ao menos um interruptor".into()),
+        [so] if intermediarios.contains(so) => {
+            return Err(format!("{} é intermediário: precisa de dois paralelos no mesmo comando", rotulo(so)));
+        }
+        [so] if paralelos.contains(so) => return Err(format!("{} é paralelo: precisa do outro paralelo no mesmo comando", rotulo(so))),
+        [so] => return Ok(vec![(*so, PapelInterruptor::Simples)]),
+        _ => {}
     }
-    // Mais de dois paralelos não fecham o esquema: os do meio passam como intermediários.
-    for h in pontas.iter().skip(1).take(pontas.len().saturating_sub(2)).chain(meio.iter()) {
-        v.push((*h, PapelInterruptor::Intermediario));
+    if paralelos.len() > 2 {
+        return Err(format!("{} paralelos no mesmo comando: um comando tem dois paralelos, nas pontas", paralelos.len()));
     }
-    if pontas.len() > 1
-        && let Some(ultimo) = pontas.last()
-    {
-        v.push((*ultimo, PapelInterruptor::FimParalelo));
+    // As pontas: os paralelos e, faltando, os blocos sem tipo; o resto dos sem tipo vai para o meio.
+    let mut pontas = paralelos;
+    let faltam = 2usize.saturating_sub(pontas.len());
+    pontas.extend(sem_tipo.iter().take(faltam));
+    intermediarios.extend(sem_tipo.iter().skip(faltam));
+    // A ordem dos cliques: a ponta clicada primeiro é o início; os intermediários seguem a ordem deles.
+    let posicao = |h: &Handle| lista.iter().position(|x| x == h).unwrap_or(usize::MAX);
+    pontas.sort_by_key(posicao);
+    intermediarios.sort_by_key(posicao);
+    let [inicio, fim] = pontas.as_slice() else {
+        return Err(format!("falta {} paralelo(s): o comando precisa de dois paralelos nas pontas", 2usize.saturating_sub(pontas.len())));
+    };
+    let mut v = vec![(*inicio, PapelInterruptor::InicioParalelo)];
+    v.extend(intermediarios.iter().map(|h| (*h, PapelInterruptor::Intermediario)));
+    v.push((*fim, PapelInterruptor::FimParalelo));
+    Ok(v)
+}
+
+/// O esquema que os interruptores dados formam, pelos tipos dos blocos, ou por que eles não fecham um esquema.
+pub fn esquema_dos_interruptores(analise: &crate::Analise, interruptores: &[Handle]) -> String {
+    if interruptores.is_empty() {
+        return "sem interruptor".into();
     }
-    v
+    match papeis_na_analise(analise, interruptores) {
+        Ok(p) => match p.iter().filter(|(_, r)| *r == PapelInterruptor::Intermediario).count() {
+            _ if p.len() == 1 => "Simples".into(),
+            0 => "Paralelo (three-way)".into(),
+            n => format!("Paralelo + {n} intermediário(s) (four-way)"),
+        },
+        Err(e) => format!("não fecha: {e}"),
+    }
 }
 
 /// Liga os interruptores do comando `letra` entre si e às luminárias dele: cada um guarda a lista dos
@@ -574,7 +627,7 @@ pub fn vincular_interruptores(
             return Err(format!("o objeto {} não é um interruptor", h.hex()));
         }
     }
-    let papeis = papeis(doc, interruptores);
+    let papeis = papeis(doc, interruptores)?;
     let lista = papeis.iter().map(|(h, _)| h.hex()).collect::<Vec<_>>().join(",");
     let chave = format!("{CHAVE_INTERRUPTORES}.{l}");
     for (h, papel) in &papeis {
@@ -641,7 +694,14 @@ pub fn aplicar_comando(
             return Err(format!("o objeto {} não é uma luminária", h.hex()));
         }
     }
+    // O esquema vem do tipo dos blocos: um grupo que não fecha é recusado antes de gravar qualquer coisa.
+    papeis_na_analise(&analise, interruptores)?;
     let mut avisos = Vec::new();
+    if interruptores.len() > 1 {
+        for p in interruptores.iter().filter_map(|h| analise.ponto(*h)).filter(|p| p.tipo_interruptor.is_none()) {
+            avisos.push(format!("{}: sem TIPO_INTERRUPTOR, entrou como paralelo ou intermediário pela posição", p.rotulo()));
+        }
+    }
     // O circuito do comando: o do primeiro interruptor que tiver, ou o da primeira luminária.
     let referencia = interruptores.iter().chain(luminarias).filter_map(|h| analise.ponto(*h)).find_map(|p| p.quadro.zip(p.circuito.clone()));
     // Quem tinha o comando e ficou de fora o perde.

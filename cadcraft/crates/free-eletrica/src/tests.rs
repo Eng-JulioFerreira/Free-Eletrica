@@ -268,43 +268,79 @@ fn proximo_circuito_e_proximo_comando() {
 }
 
 #[test]
-fn aplicar_comando_deduz_o_esquema_e_edita_o_comando() {
+fn aplicar_comando_segue_o_tipo_do_bloco_e_edita_o_comando() {
     use editar::PapelInterruptor as P;
     let setup = Setup::default();
     let mut d = planta();
     let qd = quadro(&d);
-    let sw =
-        |d: &mut Drawing, x: f64| inserir(d, "INT", x, 9.0, &[("TIPO_PONTO", "INTERRUPTOR"), ("TIPO_INTERRUPTOR", "SIMPLES"), ("POTENCIA", "0W")]);
-    let (s1, s2, s3) = (sw(&mut d, 1.0), sw(&mut d, 2.0), sw(&mut d, 3.0));
+    let sw = |d: &mut Drawing, x: f64, tipo: &str| {
+        let mut a = vec![("TIPO_PONTO", "INTERRUPTOR"), ("POTENCIA", "0W")];
+        if !tipo.is_empty() {
+            a.push(("TIPO_INTERRUPTOR", tipo));
+        }
+        inserir(d, "INT", x, 9.0, &a)
+    };
+    let simples = sw(&mut d, 1.0, "SIMPLES");
+    let (p1, p2, p3) = (sw(&mut d, 2.0, "PARALELO"), sw(&mut d, 3.0, "PARALELO"), sw(&mut d, 4.0, "PARALELO"));
+    let (m1, m2) = (sw(&mut d, 5.0, "INTERMEDIARIO"), sw(&mut d, 6.0, "INTERMEDIARIO"));
+    let (x1, x2) = (sw(&mut d, 7.0, ""), sw(&mut d, 8.0, ""));
     let luz = inserir(&mut d, "L", 5.0, 9.0, &[("TIPO_PONTO", "ILUM"), ("POTENCIA", "100VA"), ("CIRCUITO", "1"), ("QUADRO", "QD-01")]);
-    let papeis = |r: &editar::ComandoAplicado| r.papeis.iter().map(|(_, p)| *p).collect::<Vec<_>>();
-    // Um interruptor: simples.
-    let r = editar::aplicar_comando(&mut d, &setup, "b", &[s1], &[luz]).unwrap();
-    assert_eq!(papeis(&r), [P::Simples]);
-    // Dois: paralelos, na ordem dos cliques; todos no circuito da luminária.
-    let r = editar::aplicar_comando(&mut d, &setup, "b", &[s2, s1], &[luz]).unwrap();
-    assert_eq!(r.papeis, [(s2.hex(), P::InicioParalelo), (s1.hex(), P::FimParalelo)]);
+    let papeis = |d: &Drawing, hs: &[Handle]| editar::papeis(d, hs);
+    // O simples comanda sozinho.
+    assert_eq!(papeis(&d, &[simples]).unwrap(), [(simples, P::Simples)]);
+    // Dois paralelos: o clicado primeiro é o início.
+    assert_eq!(papeis(&d, &[p2, p1]).unwrap(), [(p2, P::InicioParalelo), (p1, P::FimParalelo)]);
+    // O intermediário é sempre intermediário, mesmo clicado primeiro ou por último.
+    assert_eq!(papeis(&d, &[m1, p1, p2]).unwrap(), [(p1, P::InicioParalelo), (m1, P::Intermediario), (p2, P::FimParalelo)]);
+    assert_eq!(
+        papeis(&d, &[p1, p2, m2, m1]).unwrap(),
+        [(p1, P::InicioParalelo), (m2, P::Intermediario), (m1, P::Intermediario), (p2, P::FimParalelo)]
+    );
+    // O que não fecha o esquema é recusado: o tipo do bloco não muda pelo comando.
+    for (grupo, motivo) in [
+        (vec![simples, p1], "simples"),
+        (vec![p1], "paralelo"),
+        (vec![m1], "intermediário"),
+        (vec![p1, m1], "falta"),
+        (vec![p1, p2, p3], "paralelos"),
+    ] {
+        let e = papeis(&d, &grupo).unwrap_err();
+        assert!(e.contains(motivo), "{grupo:?}: {e}");
+    }
+    // Sem TIPO_INTERRUPTOR, o bloco segue a posição: completa as pontas e depois o meio.
+    assert_eq!(papeis(&d, &[x1, x2]).unwrap(), [(x1, P::InicioParalelo), (x2, P::FimParalelo)]);
+    assert_eq!(papeis(&d, &[p1, x1, m1]).unwrap(), [(p1, P::InicioParalelo), (m1, P::Intermediario), (x1, P::FimParalelo)]);
+    assert_eq!(papeis(&d, &[x1]).unwrap(), [(x1, P::Simples)]);
+
+    // Gravar: todos no circuito da luminária, com os papéis do esquema.
+    let r = editar::aplicar_comando(&mut d, &setup, "b", &[p1, m1, p2], &[luz]).unwrap();
+    assert_eq!(r.papeis.iter().map(|(_, p)| *p).collect::<Vec<_>>(), [P::InicioParalelo, P::Intermediario, P::FimParalelo]);
     assert_eq!((r.circuito.as_deref(), r.quadro), (Some("1"), Some(qd)));
-    // Três: paralelos nas pontas e o do meio intermediário, mesmo sendo bloco de simples.
-    let r = editar::aplicar_comando(&mut d, &setup, "b", &[s1, s3, s2], &[luz]).unwrap();
-    assert_eq!(papeis(&r), [P::InicioParalelo, P::Intermediario, P::FimParalelo]);
     let pt = |d: &Drawing, h| ponto::ler_ponto(d, h).unwrap();
-    assert!([s1, s2, s3].iter().all(|h| pt(&d, *h).comando.as_deref() == Some("b") && pt(&d, *h).circuito.as_deref() == Some("1")));
+    assert!([p1, m1, p2].iter().all(|h| pt(&d, *h).comando.as_deref() == Some("b") && pt(&d, *h).circuito.as_deref() == Some("1")));
+    // Um grupo que não fecha não grava nada.
+    assert!(editar::aplicar_comando(&mut d, &setup, "c", &[simples, p3], &[luz]).is_err());
+    assert_eq!(pt(&d, simples).comando, None);
     // Editar: quem ficou de fora perde a letra e os vínculos dela.
-    let r = editar::aplicar_comando(&mut d, &setup, "b", &[s1, s2], &[luz]).unwrap();
+    let r = editar::aplicar_comando(&mut d, &setup, "b", &[p1, p2], &[luz]).unwrap();
     assert_eq!(r.retirados, 1);
-    assert_eq!(pt(&d, s3).comando.as_deref().unwrap_or(""), "");
-    assert!(!pt(&d, s3).extras.iter().any(|(k, _)| k.ends_with(".b")), "{:?}", pt(&d, s3).extras);
-    // Um comando depois do z.
-    editar::aplicar_comando(&mut d, &setup, "aa", &[s3], &[]).unwrap();
-    assert_eq!(pt(&d, s3).comando.as_deref(), Some("aa"));
+    assert_eq!(pt(&d, m1).comando.as_deref().unwrap_or(""), "");
+    assert!(!pt(&d, m1).extras.iter().any(|(k, _)| k.ends_with(".b")), "{:?}", pt(&d, m1).extras);
+    // Um bloco sem tipo num grupo avisa; um comando depois do z.
+    let r = editar::aplicar_comando(&mut d, &setup, "aa", &[x1, x2], &[]).unwrap();
+    assert!(r.avisos.iter().any(|a| a.contains("sem TIPO_INTERRUPTOR")), "{:?}", r.avisos);
+    assert_eq!(pt(&d, x1).comando.as_deref(), Some("aa"));
+    // O esquema para a mini-barra, pelo tipo dos blocos.
+    let an = analisar(&d);
+    assert_eq!(editar::esquema_dos_interruptores(&an, &[simples]), "Simples");
+    assert!(editar::esquema_dos_interruptores(&an, &[p1, m1, p2]).starts_with("Paralelo + 1 intermediário"));
+    assert!(editar::esquema_dos_interruptores(&an, &[simples, p1]).starts_with("não fecha"));
     // Entrada ruim não grava nada.
-    assert!(editar::aplicar_comando(&mut d, &setup, "", &[s1], &[]).is_err());
+    assert!(editar::aplicar_comando(&mut d, &setup, "", &[simples], &[]).is_err());
     assert!(editar::aplicar_comando(&mut d, &setup, "a", &[], &[luz]).is_err());
     assert!(editar::aplicar_comando(&mut d, &setup, "a", &[luz], &[]).is_err());
-    assert!(editar::aplicar_comando(&mut d, &setup, "a", &[s1], &[s2]).is_err());
+    assert!(editar::aplicar_comando(&mut d, &setup, "a", &[simples], &[p1]).is_err());
 }
-
 #[test]
 fn criar_circuito_grava_atributo_ou_xdata() {
     let mut d = planta();

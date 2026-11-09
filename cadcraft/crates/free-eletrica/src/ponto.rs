@@ -88,6 +88,11 @@ impl TipoInterruptor {
         matches!(self, Self::Intermediario | Self::Intermediario2 | Self::Intermediario3)
     }
 
+    /// Paralelo (three-way): fica numa das pontas do comando.
+    pub fn paralelo(self) -> bool {
+        matches!(self, Self::Paralelo | Self::Paralelo2 | Self::Paralelo3)
+    }
+
     /// Quantas teclas (letras de comando) o interruptor tem.
     pub fn teclas(self) -> usize {
         match self {

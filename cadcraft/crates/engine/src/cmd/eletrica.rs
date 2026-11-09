@@ -36,10 +36,10 @@ pub fn specs() -> Vec<CommandSpec> {
             .interactive(|_| Ok(Box::new(CircuitoM::default()))),
         CommandSpec::new("eleremoverponto", "Remove Points from Circuit", run_remover).params("{pontos: [hex]} → {removidos}").interactive(|_| Ok(Box::new(RemoverM::default()))),
         CommandSpec::new("elecomando", "Switches and Lamps", run_comando)
-            .params("{interruptor: hex | interruptores: [hex] (three-way/four-way: the first gets the phase, the last feeds the lamps), luminarias: [hex], comando?: a, b... aa, a1 (default: with every key used, the switch's last command; otherwise the next free one in the project, or in the board, as the settings say)} (switches and lamps of the scope that had the command and were left out lose it) → {comando, circuito, luminarias, interruptores: [{interruptor, papel}], avisos}")
+            .params("{interruptor: hex | interruptores: [hex] (the block's switch type decides: a simple switch alone, or two parallel ones with intermediate ones between them; the parallel clicked first gets the phase), luminarias: [hex], comando?: a, b... aa, a1 (default: with every key used, the switch's last command; otherwise the next free one in the project, or in the board, as the settings say)} (switches and lamps of the scope that had the command and were left out lose it) → {comando, circuito, luminarias, interruptores: [{interruptor, papel}], avisos}")
             .interactive(|_| Ok(Box::new(ComandoM::default()))),
         CommandSpec::new("eletrica.comando.selecao", "Switch Command Selection", run_comando_selecao)
-            .params("{comando?: text | null (a command in use loads its switches and lamps to edit; null: back to the next free one), adicionar?: [hex] (switches and lamps; a second time takes them out), limpar?: bool, confirmar?: bool (writes the command: 1 switch simple, 2 parallel, 3 or more parallel at the ends and intermediate in between)} → the command being built in ELECOMANDO, also while it runs (the mini-bar): {comando, manual, interruptores, luminarias, esquema, emUso, aplicado?}"),
+            .params("{comando?: text | null (a command in use loads its switches and lamps to edit; null: back to the next free one), adicionar?: [hex] (switches and lamps; a second time takes them out), limpar?: bool, confirmar?: bool (writes the command; the scheme comes from each block's switch type, never changed: a simple switch alone, or two parallel ones at the ends with the intermediate ones between them; anything else is refused)} → the command being built in ELECOMANDO, also while it runs (the mini-bar): {comando, manual, interruptores, luminarias, esquema, emUso, aplicado?}"),
         CommandSpec::new("elefiacao", "Wiring Tags", run_fiacao)
             .params("{quadro?: hex | TAG, eletrodutos?: [hex], limpar?: bool (erase the tags), ancora?: [x, y] (the point on the conduit), modo?: direct | leader (default: direct without `tag`, leader with it), tag?: [x, y] (leader: where the base line starts; the leader takes the angle of the two points), eletroduto?: hex (default: the conduit at `ancora`)} (default: every conduit, at its middle) → {tags, criadas, apagadas, tabelas, avisos} or {tag}")
             .interactive(|_| Ok(Box::new(FiacaoM::default()))),
@@ -1813,7 +1813,7 @@ fn clicar_no_comando(s: &mut Session, hs: &[Handle]) -> Result<()> {
         sel.comando,
         sel.interruptores.len(),
         sel.luminarias.len(),
-        ele::circuito::esquema_do_comando(sel.interruptores.len())
+        ele::editar::esquema_dos_interruptores(&analise(s)?, &sel.interruptores)
     ));
     Ok(())
 }
@@ -1842,7 +1842,7 @@ fn json_da_selecao(s: &Session, sel: &ele::circuito::SelecaoComando) -> Result<V
     let em_uso = ele::circuito::comandos_em_uso(&a.pontos, ele::circuito::quadro_do_comando(&a, sel), ele::setup::atual().escopo_comandos);
     let mut v = json_de(sel)?;
     if let Value::Object(m) = &mut v {
-        m.insert("esquema".into(), json!(ele::circuito::esquema_do_comando(sel.interruptores.len())));
+        m.insert("esquema".into(), json!(ele::editar::esquema_dos_interruptores(&analise(s)?, &sel.interruptores)));
         m.insert("emUso".into(), json!(em_uso));
     }
     Ok(v)
@@ -1923,9 +1923,9 @@ fn run_comando(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// ELECOMANDO: a letra vem pronta (a próxima livre) e a mini-barra mostra o que foi clicado. Interruptores e
-/// luminárias entram no mesmo comando em qualquer ordem; um segundo clique tira. Enter grava (um interruptor:
-/// simples; dois: paralelos; três ou mais: paralelos nas pontas e intermediários no meio) e já prepara o
-/// próximo comando. Enter sem nada clicado, ou Esc, sai. `Letra` escolhe outra letra; uma em uso abre o
+/// luminárias entram no mesmo comando em qualquer ordem; um segundo clique tira. Enter grava (o esquema vem do
+/// tipo de cada bloco: o simples sozinho, ou dois paralelos nas pontas e os intermediários no meio; o que não
+/// fecha é recusado) e já prepara o próximo comando. Enter sem nada clicado, ou Esc, sai. `Letra` escolhe outra letra; uma em uso abre o
 /// comando dela para editar.
 #[derive(Default)]
 struct ComandoM {

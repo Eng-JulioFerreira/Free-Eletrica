@@ -81,7 +81,10 @@ O `COMANDO` de um interruptor guarda um comando por tecla: `ab` são as teclas `
 um comando é a mesma letra repetida (`aa`, `bbb`) ou letra e número (`a1`), separados por vírgula num interruptor de várias
 teclas (`aa,b`). A próxima letra olha todos os interruptores e luminárias do escopo das configurações (`escopoComandos`:
 `global` ou `porQuadro`; `sufixoComandos`: `letrasRepetidas` ou `letraNumero`). Gravar um comando (`editar::aplicar_comando`)
-tira a letra de quem a tinha no escopo e ficou fora da seleção: é assim que um comando existente é editado.
+tira a letra de quem a tinha no escopo e ficou fora da seleção: é assim que um comando existente é editado. Os papéis
+(`switch_role.<letra>`) vêm do tipo do bloco (`editar::papeis`): simples só sozinho; num grupo, dois paralelos nas pontas
+(o primeiro clicado é o início) e os intermediários no meio; o grupo que não fecha é recusado. Um bloco sem tipo segue a
+posição.
 
 ### Lista de materiais
 

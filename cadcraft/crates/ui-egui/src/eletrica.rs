@@ -843,7 +843,7 @@ const PALETA_ELETRICA: [Secao; 6] = [
                 Icone::Interruptor,
                 "Comandos e luminárias",
                 "elecomando",
-                "Clique nos interruptores e nas luminárias de um comando, em qualquer ordem; Enter grava (1 simples, 2 paralelos, 3 ou mais com intermediários) e já passa à próxima letra livre (ELECOMANDO)",
+                "Clique nos interruptores e nas luminárias de um comando, em qualquer ordem; Enter grava e já passa à próxima letra livre. O esquema vem do tipo de cada bloco: simples sozinho, ou dois paralelos com intermediários entre eles (ELECOMANDO)",
             ),
         ],
     },
@@ -2207,16 +2207,15 @@ fn barra_comando(ui: &mut egui::Ui, uid: u64, st: &Estado, s: &Setup, acoes: &mu
         }
     });
     ui.separator();
-    ui.label(format!(
-        "Interruptores selecionados: {} | Luminárias selecionadas: {} ({})",
-        sel.interruptores.len(),
-        sel.luminarias.len(),
-        ele::circuito::esquema_do_comando(sel.interruptores.len())
-    ));
+    // O esquema pelo tipo de cada bloco (o atributo manda); um grupo que não fecha aparece em destaque.
+    let fecha = ele::editar::papeis_na_analise(&st.analise, &sel.interruptores).is_ok();
+    let esquema = ele::editar::esquema_dos_interruptores(&st.analise, &sel.interruptores);
+    let contagem = format!("Interruptores selecionados: {} | Luminárias selecionadas: {} ({esquema})", sel.interruptores.len(), sel.luminarias.len());
+    ui.label(if fecha || sel.interruptores.is_empty() { RichText::new(contagem) } else { RichText::new(contagem).color(COR_AVISO) });
     ui.separator();
     if ui
-        .add_enabled(!sel.interruptores.is_empty(), egui::Button::new("Confirmar comando (Enter)"))
-        .on_disabled_hover_text("Clique em ao menos um interruptor")
+        .add_enabled(fecha, egui::Button::new("Confirmar comando (Enter)"))
+        .on_disabled_hover_text("O tipo dos interruptores escolhidos não fecha um esquema: veja a mensagem ao lado")
         .clicked()
     {
         acoes.push(Acao::RodarComStatus("eletrica.comando.selecao", json!({ "confirmar": true }), |v| {

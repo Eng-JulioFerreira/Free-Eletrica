@@ -929,9 +929,11 @@ fn paralelos_e_intermediario_no_mesmo_comando_e_os_retornos() {
     s.execute("elecomando", &json!({ "interruptores": [s2.hex(), meio.hex(), s1.hex()], "luminarias": [luz.hex()], "comando": "a" })).unwrap();
     assert_eq!(retornos(&s, qd, s1).0, 1);
     assert_eq!(retornos(&s, meio, s2), (1, vec!["a".to_string(), "a\"".to_string(), "a'".to_string()]));
-    // Um interruptor só é simples; o que não é interruptor é recusado.
-    let r = s.execute("elecomando", &json!({ "interruptores": [s1.hex()], "luminarias": [luz.hex()], "comando": "b" })).unwrap();
-    assert_eq!(r["interruptores"][0]["papel"], "Simple");
+    // O tipo do bloco manda: um paralelo sozinho não fecha o esquema e é recusado, sem gravar nada; o que não é
+    // interruptor também.
+    let e = s.execute("elecomando", &json!({ "interruptores": [s1.hex()], "luminarias": [luz.hex()], "comando": "b" })).unwrap_err();
+    assert!(e.to_string().contains("paralelo"), "{e}");
+    assert_eq!(ler(&s, luz).comando.as_deref(), Some("a"));
     assert!(s.execute("elecomando", &json!({ "interruptores": [s1.hex(), luz.hex()], "luminarias": [] })).is_err());
     assert!(s.execute("elecomando", &json!({ "interruptores": [], "luminarias": [] })).is_err());
 }
