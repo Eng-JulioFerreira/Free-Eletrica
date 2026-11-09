@@ -963,6 +963,8 @@ pub struct Alimentador {
     /// A seção e o disjuntor geral foram travados à mão.
     pub secao_travada: bool,
     pub disjuntor_travado: bool,
+    /// A seção travada à mão não comporta o disjuntor geral travado: a menor que comporta.
+    pub secao_sugerida: Option<f64>,
     /// O que a norma não aceita na escolha travada: avisa sem impedir.
     pub avisos: Vec<String>,
 }
@@ -973,12 +975,22 @@ pub fn alimentador(ib: f64, fases: u8, tensao_fn: f64, cfg: &nbr5410::Config, co
     let carregados = nbr5410::condutores_carregados(fases);
     let escolha = nbr5410::secao_para_corrente(ib, carregados, cfg);
     let mut avisos = Vec::new();
-    let secao = config.secao_geral.or(escolha.map(|e| e.0));
+    // Com o disjuntor geral travado e a seção automática, o cabo acompanha o disjuntor: a menor seção com
+    // Iz ≥ In (5.3.4.1), e não a da corrente demandada, que deixaria o disjuntor maior que o cabo.
+    let para_o_disjuntor =
+        config.disjuntor_geral.filter(|_| config.secao_geral.is_none()).and_then(|d| secao_para_disjuntor(d.max(ib), carregados, cfg));
+    // A seção travada que não comporta o disjuntor: a menor que comporta, para sugerir.
+    let iz_de = |s: f64| {
+        nbr5410::indice_secao(s).and_then(|i| nbr5410::capacidade_no_metodo(i, carregados, cfg.isolacao, cfg.metodo)).map(|v| v * cfg.fct * cfg.fca)
+    };
+    let secao = config.secao_geral.or(para_o_disjuntor.map(|e| e.0)).or(escolha.map(|e| e.0));
     let iz = match config.secao_geral {
-        Some(s) => nbr5410::indice_secao(s)
-            .and_then(|i| nbr5410::capacidade_no_metodo(i, carregados, cfg.isolacao, cfg.metodo))
-            .map(|v| v * cfg.fct * cfg.fca),
-        None => escolha.map(|e| e.1),
+        Some(s) => iz_de(s),
+        None => para_o_disjuntor.map(|e| e.1).or(escolha.map(|e| e.1)),
+    };
+    let secao_sugerida = match (config.secao_geral, config.disjuntor_geral, iz) {
+        (Some(_), Some(d), Some(iz)) if d > iz + 1e-9 => secao_para_disjuntor(d.max(ib), carregados, cfg).map(|e| e.0),
+        _ => None,
     };
     let disjuntor = match config.disjuntor_geral {
         Some(d) => Some(d),
@@ -988,9 +1000,10 @@ pub fn alimentador(ib: f64, fases: u8, tensao_fn: f64, cfg: &nbr5410::Config, co
     if config.secao_geral.is_some() || config.disjuntor_geral.is_some() {
         match (disjuntor, iz) {
             (Some(d), _) if d < ib - 1e-9 => avisos.push(format!("disjuntor geral de {} A abaixo da corrente demandada ({:.1} A)", br(d), ib)),
-            (Some(d), Some(iz)) if d > iz + 1e-9 => {
-                avisos.push(format!("disjuntor geral de {} A acima da capacidade do alimentador ({:.1} A)", br(d), iz))
-            }
+            (Some(d), Some(iz)) if d > iz + 1e-9 => avisos.push(match secao_sugerida {
+                Some(s) => format!("disjuntor geral de {} A acima da capacidade do alimentador ({:.1} A): use {} mm² ou mais", br(d), iz, br(s)),
+                None => format!("disjuntor geral de {} A acima da capacidade do alimentador ({:.1} A)", br(d), iz),
+            }),
             (None, _) => avisos.push("a seção travada do alimentador não tem disjuntor entre Ib e Iz".into()),
             _ => {}
         }
@@ -1024,8 +1037,19 @@ pub fn alimentador(ib: f64, fases: u8, tensao_fn: f64, cfg: &nbr5410::Config, co
         cabo_geral: config.cabo_geral.unwrap_or_else(|| nbr5410::TipoCabo::de_isolacao(cfg.isolacao)),
         secao_travada: config.secao_geral.is_some(),
         disjuntor_travado: config.disjuntor_geral.is_some(),
+        secao_sugerida,
         avisos,
     }
+}
+
+/// A menor seção (a partir de 2,5 mm²) cuja capacidade corrigida comporta a corrente `corrente` (o disjuntor):
+/// (seção, Iz). `None`: nenhuma da tabela comporta.
+pub fn secao_para_disjuntor(corrente: f64, carregados: u8, cfg: &nbr5410::Config) -> Option<(f64, f64)> {
+    let fator = cfg.fct * cfg.fca;
+    nbr5410::SECOES.iter().copied().enumerate().filter(|(_, s)| *s >= 2.5).find_map(|(i, s)| {
+        let iz = nbr5410::capacidade_no_metodo(i, carregados, cfg.isolacao, cfg.metodo)? * fator;
+        (iz + 1e-9 >= corrente).then_some((s, iz))
+    })
 }
 
 /// Tensões do quadro (fase-neutro, fase-fase) pelo atributo TENSAO no formato "220/127V"; sem

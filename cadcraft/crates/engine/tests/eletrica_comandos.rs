@@ -94,11 +94,12 @@ fn projeto_inteiro_por_comandos_sem_interface() {
     let r = s.execute("elecircuito", &json!({ "quadro": qd.hex(), "pontos": [luz.hex()] })).unwrap();
     assert_eq!(r["circuito"], "1");
     s.start("elecircuito").unwrap();
-    s.input(Input::Pick(vec![qd])).unwrap();
-    s.input(Input::Enter).unwrap(); // aceita o próximo: 2
+    s.input(Input::Pick(vec![qd])).unwrap(); // o quadro; o número já é o próximo livre: 2
     s.input(Input::Pick(vec![tug])).unwrap();
-    s.input(Input::Enter).unwrap();
+    s.input(Input::Enter).unwrap(); // confirma e prepara o próximo
     assert_eq!(circuito(&s, tug).as_deref(), Some("2"));
+    s.input(Input::Enter).unwrap(); // nada clicado: sai
+    assert!(s.running.is_none());
 
     // Comandos e luminárias: o interruptor sem circuito entra no da luz.
     let r = s.execute("elecomando", &json!({ "interruptor": int.hex(), "luminarias": [luz.hex()] })).unwrap();
@@ -176,9 +177,14 @@ fn quadro_de_cargas_e_isolacao_por_comandos() {
     // Adicionar pontos a um circuito existente: o alvo leva o ELECIRCUITO direto aos pontos.
     s.execute("eletrica.circuito.alvo", &json!({ "circuito": "3" })).unwrap();
     s.start("elecircuito").unwrap();
+    // O circuito escolhido abre para editar, com a descrição dele.
+    let sel = s.execute("eletrica.circuito.selecao", &json!({})).unwrap();
+    assert_eq!((sel["circuito"].as_str(), sel["carregado"].as_bool(), sel["descricao"].as_str()), (Some("3"), Some(true), Some("Chuveiro")));
     s.input(Input::Pick(vec![tug])).unwrap();
     s.input(Input::Enter).unwrap();
     assert_eq!(circuito(&s, tug).as_deref(), Some("3"));
+    s.input(Input::Enter).unwrap();
+    assert!(s.running.is_none());
 
     // Juntar o 3 no 1 e excluir o 1.
     let r = s.execute("eletrica.circuito.juntar", &json!({ "de": "3", "para": "1" })).unwrap();
@@ -738,8 +744,13 @@ fn circuito_com_descricao_esquema_e_tensao() {
         s.input(Input::Text(v.into())).unwrap();
     }
     assert!(s.running.is_some());
+    // Os campos ficam na seleção até confirmar: nada foi gravado ainda.
+    let antes = s.execute("eletrica.rotear", &json!({})).unwrap();
+    assert!(antes["linhas"].as_array().unwrap().iter().all(|l| l["circuito"]["id"] != "7"));
     s.input(Input::Pick(vec![tug])).unwrap();
-    s.input(Input::Enter).unwrap();
+    s.input(Input::Enter).unwrap(); // confirma; o próximo é o 8
+    assert_eq!(free_eletrica::circuito::ativo(uid), Some((qd, "8".to_string())));
+    s.input(Input::Enter).unwrap(); // nada clicado: sai
     assert_eq!(free_eletrica::circuito::ativo(uid), None);
     let c = s.execute("eletrica.rotear", &json!({})).unwrap();
     let l = c["linhas"].as_array().unwrap().iter().find(|l| l["circuito"]["id"] == "7").unwrap().clone();
@@ -867,9 +878,112 @@ fn elecomando_continuo_sem_repetir_letra_e_pela_mini_barra() {
     assert!(s.running.is_none());
     // Confirmar sem interruptor é recusado; entrada ruim também.
     assert!(s.execute("eletrica.comando.selecao", &json!({ "confirmar": true })).is_err());
-    for ruim in [json!({ "comando": 5 }), json!({ "comando": "a b" }), json!({ "adicionar": "x" }), json!({ "adicionar": ["ZZ"] })] {
+    for ruim in
+        [json!({ "comando": 5 }), json!({ "comando": "a b" }), json!({ "adicionar": "x" }), json!({ "adicionar": ["ZZ"] }), json!({ "modo": "x" })]
+    {
         assert!(s.execute("eletrica.comando.selecao", &ruim).is_err(), "{ruim}");
     }
+
+    // Editar comando: o primeiro clique num ponto com comando carrega o grupo inteiro; depois, cada clique tira
+    // ou põe, e confirmar grava. O modo continua para o próximo.
+    s.start("elecomando").unwrap();
+    s.input(Input::Keyword("Editar".into())).unwrap();
+    let v = selecao(&mut s, json!({}));
+    assert_eq!((v["editar"].as_bool(), v["manual"].as_bool()), (Some(true), Some(false)));
+    s.input(Input::Pick(vec![luzes[1]])).unwrap(); // a luz do comando b carrega o b
+    let v = selecao(&mut s, json!({}));
+    assert_eq!((v["comando"].as_str(), v["manual"].as_bool()), (Some("b"), Some(true)));
+    assert_eq!(v["interruptores"], json!([s2.hex()]));
+    assert_eq!(v["luminarias"], json!([luzes[1].hex(), luzes[4].hex()]));
+    s.input(Input::Pick(vec![luzes[4]])).unwrap(); // tira
+    s.input(Input::Enter).unwrap();
+    assert_eq!(ler(&s, luzes[4]).comando, None, "saiu do comando b");
+    assert_eq!(ler(&s, luzes[1]).comando.as_deref(), Some("b"));
+    let v = selecao(&mut s, json!({}));
+    assert_eq!((v["editar"].as_bool(), v["manual"].as_bool()), (Some(true), Some(false)), "pronto para editar outro");
+    // Um ponto sem comando não carrega nada; voltar ao modo Novo traz a próxima letra livre.
+    s.input(Input::Pick(vec![luzes[4]])).unwrap();
+    assert!(selecao(&mut s, json!({}))["luminarias"].as_array().unwrap().is_empty());
+    let v = selecao(&mut s, json!({ "modo": "novo" }));
+    assert_eq!((v["editar"].as_bool(), v["comando"].as_str()), (Some(false), Some("e")));
+    s.input(Input::Cancel).unwrap();
+    assert!(s.running.is_none());
+}
+
+#[test]
+fn circuito_novo_e_editar_pela_mini_barra_planilha_e_fontes() {
+    let _setup = trava_setup();
+    let mut s = Session::new();
+    let (d, [qd, luz, int, tug]) = planta();
+    s.open_drawing(d, "Planta", None);
+    let selecao = |s: &mut Session, p: Value| s.execute("eletrica.circuito.selecao", &p).unwrap();
+
+    // Novo: o único quadro já vem escolhido e o número é o próximo livre; os dados ficam na seleção.
+    s.start("elecircuito").unwrap();
+    let v = selecao(&mut s, json!({ "descricao": "Iluminação", "esquema": "F+N+T", "tensao": 220 }));
+    assert_eq!((v["quadro"].as_str(), v["circuito"].as_str(), v["editar"].as_bool()), (Some(qd.hex().as_str()), Some("1"), Some(false)));
+    assert_eq!((v["descricao"].as_str(), v["esquema"].as_str(), v["tensao"].as_f64()), (Some("Iluminação"), Some("F+N+T"), Some(220.0)));
+    s.input(Input::Pick(vec![luz])).unwrap();
+    s.input(Input::Pick(vec![int])).unwrap();
+    s.input(Input::Pick(vec![tug])).unwrap();
+    s.input(Input::Pick(vec![tug])).unwrap(); // um segundo clique tira
+    assert_eq!(selecao(&mut s, json!({}))["pontos"], json!([luz.hex(), int.hex()]));
+    assert_eq!(circuito(&s, luz), None, "nada gravado antes de confirmar");
+    let v = selecao(&mut s, json!({ "confirmar": true }));
+    assert_eq!((v["aplicado"]["circuito"].as_str(), v["aplicado"]["adicionados"].as_u64()), (Some("1"), Some(2)));
+    assert_eq!((circuito(&s, luz).as_deref(), circuito(&s, int).as_deref()), (Some("1"), Some("1")));
+    assert_eq!(v["circuito"], "2", "o próximo já está pronto");
+    let l = s.execute("eletrica.rotear", &json!({})).unwrap()["linhas"][0].clone();
+    assert_eq!((l["descricao"].as_str(), l["esquema"].as_str()), (Some("Iluminação"), Some("fnt")));
+
+    // Editar: um clique num ponto traz o circuito dele, com os pontos que já tem.
+    let v = selecao(&mut s, json!({ "modo": "editar" }));
+    assert_eq!((v["editar"].as_bool(), v["carregado"].as_bool()), (Some(true), Some(false)));
+    s.input(Input::Pick(vec![luz])).unwrap();
+    let v = selecao(&mut s, json!({}));
+    assert_eq!((v["circuito"].as_str(), v["carregado"].as_bool(), v["descricao"].as_str()), (Some("1"), Some(true), Some("Iluminação")));
+    assert_eq!(v["pontos"], json!([luz.hex(), int.hex()]));
+    assert_eq!(v["circuitos"], json!(["1"]));
+    // Tira o interruptor, põe a tomada e grava: o que saiu fica sem circuito.
+    s.input(Input::Pick(vec![int])).unwrap();
+    s.input(Input::Pick(vec![tug])).unwrap();
+    s.input(Input::Enter).unwrap();
+    assert_eq!((circuito(&s, int), circuito(&s, tug).as_deref()), (None, Some("1")));
+    // Escolher pelo número também abre para editar; Esc sai sem gravar o que não foi confirmado.
+    let v = selecao(&mut s, json!({ "circuito": 1 }));
+    assert_eq!(v["pontos"], json!([luz.hex(), tug.hex()]));
+    s.input(Input::Pick(vec![luz])).unwrap();
+    s.input(Input::Cancel).unwrap();
+    assert!(s.running.is_none());
+    assert_eq!(circuito(&s, luz).as_deref(), Some("1"));
+    for ruim in
+        [json!({ "esquema": "4F" }), json!({ "tensao": -5 }), json!({ "modo": "x" }), json!({ "adicionar": ["ZZ"] }), json!({ "quadro": "NADA" })]
+    {
+        assert!(s.execute("eletrica.circuito.selecao", &ruim).is_err(), "{ruim}");
+    }
+
+    // A planilha dos materiais vai para o arquivo, com o BOM e as colunas do Excel.
+    let arquivo = std::env::temp_dir().join(format!("free-eletrica-cmd-{}", std::process::id()));
+    let r = s.execute("eletrica.materiais.exportar", &json!({ "arquivo": arquivo.to_string_lossy() })).unwrap();
+    let gravado = std::path::PathBuf::from(r["arquivo"].as_str().unwrap());
+    assert_eq!(gravado.extension().and_then(|e| e.to_str()), Some("csv"), "sem extensão, vira .csv");
+    let lido = std::fs::read_to_string(&gravado).unwrap();
+    let _ = std::fs::remove_file(&gravado);
+    assert!(lido.starts_with("\u{FEFF}Categoria;Item / Descrição;"), "{lido}");
+    assert!(r["itens"].as_u64().unwrap() > 0);
+    // O diálogo de salvar pode pôr a extensão do desenho depois do .csv: ela sai.
+    let dobrado = std::env::temp_dir().join(format!("free-eletrica-cmd-{}.csv.dxf", std::process::id()));
+    let r = s.execute("eletrica.materiais.exportar", &json!({ "arquivo": dobrado.to_string_lossy() })).unwrap();
+    let gravado = std::path::PathBuf::from(r["arquivo"].as_str().unwrap());
+    assert_eq!(gravado, dobrado.with_extension(""));
+    let _ = std::fs::remove_file(&gravado);
+    assert!(s.execute("eletrica.materiais.exportar", &json!({})).is_err());
+
+    // As fontes: as predefinidas (sem a vetorial sem acentos) e a atual.
+    let f = s.execute("eletrica.fontes", &json!({})).unwrap();
+    let nomes: Vec<&str> = f["predefinidas"].as_array().unwrap().iter().filter_map(|x| x["arquivo"].as_str()).collect();
+    assert_eq!(nomes, ["arial.ttf", "calibri.ttf", "tahoma.ttf", "isocp.shx"]);
+    assert!(f["instaladas"].is_array() && f["atual"].is_string());
 }
 
 #[test]
@@ -1785,7 +1899,7 @@ fn telecom_por_comandos() {
     let trecho = t["trechos"].as_array().unwrap().iter().find(|x| x["eletroduto"] == tronco.as_str()).unwrap().clone();
     assert_eq!(trecho["textoIds"], "1, 2");
     assert_eq!(
-        (trecho["textoCabos"].as_str(), trecho["textoDiametro"].as_str().map(|d| d.starts_with("%%c"))),
+        (trecho["textoCabos"].as_str(), trecho["textoDiametro"].as_str().map(|d| d.starts_with("Ø"))),
         (Some("2x UTP Cat 6"), Some(true)),
         "{trecho}"
     );

@@ -213,6 +213,41 @@ pub const BLOCO_CAIXA: &str = "CX-PASSAGEM";
 pub const BLOCO_CAIXA_OCT: &str = "CX-OCT";
 /// O raio do octógono da caixa de teto (m).
 const RAIO_OCTOGONO: f64 = 0.06;
+/// O eletroduto que sobe e o que desce para outro pavimento (prumada): um nó do grafo, como uma caixa, onde o
+/// eletroduto do pavimento termina.
+pub const BLOCO_SOBE: &str = "ELE-SOBE";
+pub const BLOCO_DESCE: &str = "ELE-DESCE";
+/// O raio do círculo do símbolo de subida e descida (m).
+const RAIO_PRUMADA: f64 = 0.05;
+
+/// O símbolo do eletroduto que sobe (seta saindo do centro do círculo para fora) ou que desce (seta vindo de
+/// fora e entrando no centro), com o círculo em `(cx, cy)`, em metros.
+fn pecas_prumada(sobe: bool, cx: f64, cy: f64) -> Vec<Peca> {
+    let d = std::f64::consts::FRAC_1_SQRT_2;
+    let fora = 2.6 * RAIO_PRUMADA;
+    let (cauda, ponta, dir) = if sobe { ((0.0, 0.0), (fora * d, fora * d), (d, d)) } else { ((fora * d, fora * d), (0.0, 0.0), (-d, -d)) };
+    let (comp, meia) = (0.035, 0.013);
+    let base = (ponta.0 - dir.0 * comp, ponta.1 - dir.1 * comp);
+    let normal = (-dir.1, dir.0);
+    // Sem a ponta da seta, a haste para na base dela.
+    vec![
+        Peca::Circulo(cx, cy, RAIO_PRUMADA),
+        Peca::Linha(cx + cauda.0, cy + cauda.1, cx + base.0, cy + base.1),
+        Peca::Cheio([
+            (cx + ponta.0, cy + ponta.1),
+            (cx + base.0 + normal.0 * meia, cy + base.1 + normal.1 * meia),
+            (cx + base.0 - normal.0 * meia, cy + base.1 - normal.1 * meia),
+        ]),
+    ]
+}
+
+/// O símbolo de subida (ou descida) desenhado com o círculo em `centro` (m), nas unidades do desenho: para a
+/// legenda.
+pub(crate) fn desenho_prumada(sobe: bool, centro: [f64; 2], m: f64) -> Vec<EntityKind> {
+    let u = |v: f64| v / m;
+    pecas_prumada(sobe, centro[0], centro[1]).iter().map(|p| entidade_da_peca(p, &u)).collect()
+}
+
 /// O ponto de luz no teto e o ponto de luz na parede (arandela).
 pub const BLOCO_LUZ_TETO: &str = "ILU-OCT";
 pub const BLOCO_ARANDELA: &str = "ILU-PAR";
@@ -248,7 +283,7 @@ pub fn circuito_na_planta(circuito: &str) -> String {
 /// Blocos base, na ordem da barra de inserção. Cada tomada e cada interruptor é um módulo só: duas tomadas
 /// ou duas teclas no mesmo ponto são dois blocos empilhados ([`empilhar`]), cada um com o seu circuito e o
 /// seu comando.
-pub const BLOCOS_BASE: [&str; 18] = [
+pub const BLOCOS_BASE: [&str; 20] = [
     "TOM-SIM-BAIXA",
     "TOM-SIM-MEDIA",
     "TOM-SIM-ALTA",
@@ -267,6 +302,8 @@ pub const BLOCOS_BASE: [&str; 18] = [
     "RACK",
     BLOCO_CAIXA,
     BLOCO_CAIXA_OCT,
+    BLOCO_SOBE,
+    BLOCO_DESCE,
 ];
 
 /// A altura de uma tomada base, que o preenchimento do triângulo mostra.
@@ -621,6 +658,14 @@ fn definicao_base(nome: &str, tensao: &str) -> Option<(Vec<Peca>, Vec<Att>)> {
                 visivel("ALTURA", "", "Altura fora da legenda", (0.08, -0.02)),
             ],
         ),
+        BLOCO_SOBE | BLOCO_DESCE => (
+            pecas_prumada(nome == BLOCO_SOBE, 0.0, 0.0),
+            vec![
+                constante("TIPO_PONTO", "CAIXA DE PASSAGEM"),
+                att("TAG", "", "Identificação"),
+                visivel("ALTURA", "", "Altura fora da legenda", (0.08, -0.07)),
+            ],
+        ),
         "RJ45" => (
             vec![
                 Peca::Linha(-0.035, 0.0, 0.035, 0.0),
@@ -835,7 +880,7 @@ pub fn falta_base(doc: &Drawing) -> bool {
 /// Auto-bootstrap: põe no desenho as camadas e os blocos base que faltam. O que já existe (um bloco
 /// redesenhado pelo projetista, por exemplo) fica como está. Devolve se mudou algo.
 pub fn garantir_base(doc: &mut Drawing, setup: &crate::setup::Setup, metros: f64) -> bool {
-    crate::tabela::garantir_estilo(doc, setup.fonte_textos);
+    crate::tabela::garantir_estilo(doc, &setup.fonte_textos);
     if !falta_base(doc) {
         return false;
     }

@@ -768,6 +768,73 @@ pub fn aplicar_comando(
     })
 }
 
+/// O que [`aplicar_circuito`] fez.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CircuitoAplicado {
+    #[serde(serialize_with = "hex")]
+    pub quadro: Handle,
+    pub circuito: String,
+    /// Pontos que entraram no circuito (vindos de outro ou sem circuito).
+    pub adicionados: usize,
+    /// Pontos que saíram (estavam no circuito carregado e foram desmarcados).
+    pub retirados: usize,
+    /// Os pontos do circuito agora.
+    pub pontos: usize,
+}
+
+fn hex<S: serde::Serializer>(h: &Handle, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_str(&h.hex())
+}
+
+/// Grava o circuito montado no ELECIRCUITO: a descrição, o esquema e a tensão no quadro, os pontos marcados no
+/// circuito e, editando um que já existia, os desmarcados fora dele. Confere tudo antes de gravar.
+pub fn aplicar_circuito(doc: &mut Drawing, sel: &crate::circuito::SelecaoCircuito) -> Result<CircuitoAplicado, String> {
+    let quadro = sel.quadro.ok_or("escolha o quadro do circuito")?;
+    let id = sel.circuito.trim().to_string();
+    if id.is_empty() {
+        return Err("informe o número do circuito".into());
+    }
+    let analise = crate::analisar(doc);
+    if !analise.ponto(quadro).is_some_and(|q| q.tipo == crate::TipoPonto::Quadro) {
+        return Err("o quadro escolhido não é um bloco de quadro (TIPO_PONTO = QUADRO)".into());
+    }
+    for h in &sel.pontos {
+        match analise.ponto(*h) {
+            None => return Err(format!("o objeto {} não é um ponto elétrico", h.hex())),
+            Some(p) if p.tipo == crate::TipoPonto::Quadro => return Err(format!("{}: um quadro não entra num circuito", p.rotulo())),
+            Some(_) => {}
+        }
+    }
+    if let Some(t) = sel.tensao
+        && !(t.is_finite() && t > 0.0)
+    {
+        return Err(format!("tensão {t} inválida"));
+    }
+    if sel.vazia() {
+        return Err("clique nos pontos do circuito".into());
+    }
+    let descricao = sel.descricao.trim();
+    // Um circuito novo sem descrição não apaga a de outro com o mesmo número; editando, apagar vale.
+    if !descricao.is_empty() || sel.carregado {
+        definir_descricao(doc, quadro, &id, Some(descricao).filter(|d| !d.is_empty()))?;
+    }
+    definir_esquema(doc, quadro, &id, sel.esquema)?;
+    definir_tensao_circuito(doc, quadro, &id, sel.tensao)?;
+    let mut adicionados = 0;
+    for h in &sel.pontos {
+        let ja =
+            analise.ponto(*h).is_some_and(|p| p.quadro == Some(quadro) && p.circuito.as_deref().is_some_and(|c| c.trim().eq_ignore_ascii_case(&id)));
+        if !ja {
+            atribuir_circuito(doc, *h, quadro, &id)?;
+            adicionados += 1;
+        }
+    }
+    let (_, fora) = sel.diferenca();
+    let retirados = if fora.is_empty() { 0 } else { remover_do_circuito(doc, &fora)? };
+    Ok(CircuitoAplicado { quadro, circuito: id, adicionados, retirados, pontos: sel.pontos.len() })
+}
+
 /// Descrição do circuito no quadro de cargas (`None` apaga). Um circuito descrito existe no
 /// quadro mesmo sem pontos.
 pub fn definir_descricao(doc: &mut Drawing, quadro: Handle, circuito: &str, descricao: Option<&str>) -> Result<(), String> {

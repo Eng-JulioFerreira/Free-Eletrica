@@ -73,7 +73,9 @@ vazar das linhas. O circuito lido é o que está entre os traços. A inserção,
 textos; o `ILU-OCT` antigo (anel cheio com os textos fora) é trocado ao preparar o desenho, e as inserções vêm junto.
 
 Também entram `TOM-TUE`, `QDG`, `QDC`, `RJ45`, `RACK`, `CX-PASSAGEM` e `CX-OCT`, a caixa de passagem octogonal de teto,
-uma derivação sem potência nem comando. Um bloco com o mesmo nome já no desenho
+uma derivação sem potência nem comando, e `ELE-SOBE` e `ELE-DESCE`, o eletroduto que sobe (círculo com a seta saindo) e o
+que desce (seta entrando no centro) para outro pavimento: nós do grafo como uma caixa, sem caixa física na lista de
+materiais, no teto e no piso. Um bloco com o mesmo nome já no desenho
 fica como está: é assim que se usa outro símbolo. Só o desenho padrão de uma versão anterior é trocado. Excluído na janela
 de blocos, um bloco de fábrica não volta sozinho; **Configurações > Geral** o traz de volta. Interruptores têm
 `TIPO_INTERRUPTOR` constante (`1S`, `2S`, `3S`, `PARALELO`, `PARALELO-2S`, `PARALELO-3S`, `INTERMEDIARIO`,
@@ -188,8 +190,8 @@ comprimento = 2D + |cota - Z de A| + |cota - Z de B|. Sem `ALTURA`, valem: TUG/T
 0,30 m, interruptor 1,10 m, quadro 1,50 m, iluminação no teto (sem aviso). Um número sem unidade acima de
 10 é lido em centímetros (`30` = 0,30 m).
 
-`CIRCUITO`, `COMANDO` e `QUADRO` não precisam existir no bloco: as ferramentas **Criar
-circuito** e **Comandos e luminárias** gravam no atributo quando ele existe e, senão, no XDATA
+`CIRCUITO`, `COMANDO` e `QUADRO` não precisam existir no bloco: as ferramentas **Criar / editar
+circuito** e **Criar / editar comando** gravam no atributo quando ele existe e, senão, no XDATA
 do bloco (aplicativo `FREE_ELETRICA`), que viaja com o DWG/DXF e é copiado junto com o bloco. Com um
 só quadro no desenho, todo ponto é dele sem precisar de `QUADRO`.
 

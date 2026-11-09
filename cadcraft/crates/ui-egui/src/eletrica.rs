@@ -74,6 +74,9 @@ struct Janelas {
     inspecao: bool,
     /// O circuito destacado no desenho: (quadro, circuito).
     destaque: Option<(Handle, String)>,
+    /// O ponto de um aviso do diagnóstico, destacado no desenho pelo "Ir para o ponto" (só com o Dimensionar
+    /// projeto aberto).
+    marca: Option<[f64; 2]>,
     /// O filtro de categoria da mini-barra de pontos.
     filtro_barra: FiltroPontos,
     /// A busca por nome ou legenda da mini-barra de pontos.
@@ -126,6 +129,7 @@ fn fechar(j: &mut Janelas, q: Qual) {
         Qual::Setup => j.setup = None,
         // O destaque do circuito só existe com o quadro de cargas aberto: não sobra nada no desenho.
         Qual::Cargas => j.destaque = None,
+        Qual::Dimensionar => j.marca = None,
         _ => {}
     }
 }
@@ -214,6 +218,7 @@ enum Aba {
     Criterios,
     Alturas,
     Geral,
+    Comandos,
     Condutores,
     Eletrodutos,
     Agrupamento,
@@ -222,13 +227,14 @@ enum Aba {
 }
 
 impl Aba {
-    const TODAS: [Aba; 8] =
-        [Aba::Criterios, Aba::Alturas, Aba::Geral, Aba::Condutores, Aba::Eletrodutos, Aba::Agrupamento, Aba::Demanda, Aba::Telecom];
+    const TODAS: [Aba; 9] =
+        [Aba::Criterios, Aba::Alturas, Aba::Geral, Aba::Comandos, Aba::Condutores, Aba::Eletrodutos, Aba::Agrupamento, Aba::Demanda, Aba::Telecom];
     fn nome(self) -> &'static str {
         match self {
             Aba::Criterios => "Critérios elétricos",
             Aba::Alturas => "Alturas",
             Aba::Geral => "Geral",
+            Aba::Comandos => "Comandos",
             Aba::Condutores => "Condutores",
             Aba::Eletrodutos => "Eletrodutos",
             Aba::Agrupamento => "Agrupamento",
@@ -256,6 +262,10 @@ enum Acao {
     Localizar(Vec<[f64; 2]>),
     /// Responde ao comando em andamento, como o teclado (Esc).
     Entrada(cadcraft_engine::Input),
+    /// Destaca (ou apaga, com `None`) o ponto de um aviso do diagnóstico no desenho.
+    Marcar(Option<[f64; 2]>),
+    /// Pergunta onde salvar e exporta a lista de materiais para o Excel.
+    ExportarPlanilha,
 }
 
 /// As linhas selecionadas de uma tabela, pelo id de cada linha (o circuito, o handle do ponto ou do eletroduto).
@@ -835,15 +845,15 @@ const PALETA_ELETRICA: [Secao; 6] = [
         ferramentas: &[
             ferr(
                 Icone::Circuito,
-                "Criar circuito",
+                "Criar / editar circuito",
                 "elecircuito",
-                "Selecione o quadro, o número e os pontos do circuito; a barra sobre o desenho edita descrição, esquema e tensão (ELECIRCUITO)",
+                "Novo: escolha o quadro, o número, a descrição e o esquema na barra sobre o desenho e clique nos pontos. Editar: escolha o circuito ou clique num ponto dele; os pontos ficam em destaque e cada clique tira ou põe. Enter grava (ELECIRCUITO)",
             ),
             ferr(
                 Icone::Interruptor,
-                "Comandos e luminárias",
+                "Criar / editar comando",
                 "elecomando",
-                "Clique nos interruptores e nas luminárias de um comando, em qualquer ordem; Enter grava e já passa à próxima letra livre. O esquema vem do tipo de cada bloco: simples sozinho, ou dois paralelos com intermediários entre eles (ELECOMANDO)",
+                "Clique nos interruptores e nas luminárias de um comando, em qualquer ordem; Enter grava e já passa à próxima letra livre. Editar: escolha a letra ou clique num ponto do comando. O esquema vem do tipo de cada bloco: simples sozinho, ou dois paralelos com intermediários entre eles (ELECOMANDO)",
             ),
         ],
     },
@@ -1447,8 +1457,24 @@ fn executar(app: &mut CadApp, acoes: Vec<Acao>) {
                     app.set_status(format!("Free Elétrica: {e}"));
                 }
             }
+            Acao::Marcar(p) => trava(&JANELAS).marca = p,
+            Acao::ExportarPlanilha => exportar_planilha(app),
         }
     }
+}
+
+/// O diálogo de salvar e o `eletrica.materiais.exportar`; o resultado vai para a barra de status. Sem diálogo
+/// (na web, nos testes), nada acontece.
+fn exportar_planilha(app: &mut CadApp) {
+    let titulo = app.session.state().map(|s| s.title.clone()).unwrap_or_default();
+    let nome = std::path::Path::new(&titulo).file_stem().map(|s| s.to_string_lossy().to_string()).filter(|s| !s.is_empty());
+    let sugerido = format!("Lista de materiais - {}.csv", nome.unwrap_or_else(|| "projeto".into()));
+    let Some(arquivo) = app.services.pick_save.as_ref().and_then(|f| f(&sugerido)) else { return };
+    let r = app.run("eletrica.materiais.exportar", json!({ "arquivo": arquivo }));
+    app.set_status(match r {
+        Ok(v) => format!("Lista de materiais exportada: {} ({} itens)", v["arquivo"].as_str().unwrap_or("-"), v["itens"]),
+        Err(e) => format!("Free Elétrica: {e}"),
+    });
 }
 
 /// Enquadra os pontos na tela, com folga; um ponto só fica com uma vista de 10 m.
@@ -1818,6 +1844,23 @@ pub fn janelas(app: &mut CadApp, ctx: &egui::Context) {
                         acoes.push(Acao::Rodar("eletrica.setup", json!({ "fatorMateriais": 1.0 + folga / 100.0 })));
                     }
                 });
+                // As duas saídas, lado a lado: a tabela na prancha e a planilha para o Excel.
+                ui.horizontal(|ui| {
+                    if ui
+                        .button("Inserir Tabela na Prancha (DXF)")
+                        .on_hover_text("Clique num ponto da planta: a tabela completa entra como bloco, na escala 1 un = 1 m (ELEMATERIAIS_TABELA)")
+                        .clicked()
+                    {
+                        acoes.push(Acao::Iniciar("elemateriais_tabela"));
+                    }
+                    if ui
+                        .button("Exportar para Excel (.csv)")
+                        .on_hover_text("Planilha com Categoria, Item / Descrição, Isolação / Especificação, Cor / Função, Unidade e Quantidade: abre no Excel com os acentos certos")
+                        .clicked()
+                    {
+                        acoes.push(Acao::ExportarPlanilha);
+                    }
+                });
                 ui.separator();
                 egui::ScrollArea::vertical().auto_shrink([false, true]).show(ui, |ui| lista_de_materiais(ui, &t, &m));
             }),
@@ -1844,10 +1887,18 @@ pub fn janelas(app: &mut CadApp, ctx: &egui::Context) {
 /// Desenha, sobre o desenho no espaço do modelo, o destaque do circuito, os halos da inspeção e a
 /// barra de contexto do comando em andamento.
 pub fn sobre_canvas(app: &mut CadApp, ui: &mut egui::Ui, painter: &egui::Painter, xf: &crate::canvas::Xf) {
-    let (inspecao, destaque) = {
+    let (inspecao, destaque, marca) = {
         let j = trava(&JANELAS);
-        (j.inspecao, j.destaque.clone().filter(|_| j.abertas.contains(&Qual::Cargas)))
+        (j.inspecao, j.destaque.clone().filter(|_| j.abertas.contains(&Qual::Cargas)), j.marca.filter(|_| j.abertas.contains(&Qual::Dimensionar)))
     };
+    // O ponto do aviso escolhido no diagnóstico: um anel duplo, por cima de tudo.
+    if let Some(p) = marca {
+        let c = na_tela(xf, p);
+        let cor = cor_do_nivel(Nivel::Laranja);
+        painter.circle_filled(c, 18.0, cor.gamma_multiply(0.18));
+        painter.circle_stroke(c, 18.0, Stroke::new(3.0, cor));
+        painter.circle_stroke(c, 25.0, Stroke::new(1.5, cor));
+    }
     let comando = app.session.running.as_ref().map(|r| r.id.clone());
     let barra = comando
         .as_deref()
@@ -1884,10 +1935,12 @@ pub fn sobre_canvas(app: &mut CadApp, ui: &mut egui::Ui, painter: &egui::Painter
     }
     let mut acoes = Vec::new();
     if let Some(c) = barra {
-        if c == "elecomando"
-            && let Ok(uid) = app.session.state().map(|d| d.uid)
-        {
-            desenhar_selecao_comando(painter, xf, &st, uid);
+        if let Ok(uid) = app.session.state().map(|d| d.uid) {
+            match c.as_str() {
+                "elecomando" => desenhar_selecao_comando(painter, xf, &st, uid),
+                "elecircuito" => desenhar_selecao_circuito(painter, xf, &st, uid),
+                _ => {}
+            }
         }
         barra_de_contexto(app, &ctx, xf, &c, &st, &s, &mut acoes);
     }
@@ -1998,7 +2051,7 @@ fn legenda_inspecao(ctx: &egui::Context, xf: &crate::canvas::Xf, itens: &[Item])
 }
 
 /// O bloco de cada tipo da barra de inserção: (rótulo, bloco).
-const TIPOS_BARRA: [(&str, &str); 18] = [
+const TIPOS_BARRA: [(&str, &str); 20] = [
     ("Tomada baixa", "TOM-SIM-BAIXA"),
     ("Tomada média", "TOM-SIM-MEDIA"),
     ("Tomada alta", "TOM-SIM-ALTA"),
@@ -2017,6 +2070,8 @@ const TIPOS_BARRA: [(&str, &str); 18] = [
     ("Rack", "RACK"),
     ("Caixa de passagem", "CX-PASSAGEM"),
     ("Caixa de passagem octogonal (teto)", "CX-OCT"),
+    ("Eletroduto que sobe", "ELE-SOBE"),
+    ("Eletroduto que desce", "ELE-DESCE"),
 ];
 
 /// As alturas prontas: (nome, valor). Teto usa o pé-direito.
@@ -2210,6 +2265,24 @@ fn barra_comando(ui: &mut egui::Ui, uid: u64, st: &Estado, s: &Setup, acoes: &mu
     let sel = ele::circuito::selecao_comando(uid).unwrap_or_default();
     let quadro = ele::circuito::quadro_do_comando(&st.analise, &sel);
     let em_uso = ele::circuito::comandos_em_uso(&st.analise.pontos, quadro, s.escopo_comandos);
+    alternar_modo(ui, sel.editar, "Novo comando", "Editar comando existente", "eletrica.comando.selecao", acoes);
+    ui.separator();
+    if sel.editar && !sel.manual {
+        // Nada carregado ainda: escolher na lista ou clicar num ponto que já tem comando.
+        egui::ComboBox::from_id_salt("ele-barra-comandos-em-uso").selected_text("Escolha o comando").width(140.0).show_ui(ui, |ui| {
+            for c in &em_uso {
+                if ui.selectable_label(false, format!("Comando {c}")).clicked() {
+                    acoes.push(Acao::Rodar("eletrica.comando.selecao", json!({ "comando": c })));
+                }
+            }
+        });
+        ui.label(pequeno("ou clique num interruptor ou numa luminária que já tem comando.", ui.visuals().weak_text_color()));
+        ui.separator();
+        if ui.button("X Sair (ESC)").on_hover_text("Encerra a ferramenta").clicked() {
+            acoes.push(Acao::Entrada(cadcraft_engine::Input::Cancel));
+        }
+        return;
+    }
     let rotulo = ui.label("Comando atual:");
     // O texto em edição fica na memória da barra até sair do campo; a letra nova o reinicia.
     let chave = egui::Id::new(("ele-barra-comando", uid, sel.comando.as_str()));
@@ -2239,8 +2312,9 @@ fn barra_comando(ui: &mut egui::Ui, uid: u64, st: &Estado, s: &Setup, acoes: &mu
     let contagem = format!("Interruptores: {} | Luminárias: {} -> Esquema: {esquema}", sel.interruptores.len(), sel.luminarias.len());
     ui.label(if fecha || sel.interruptores.is_empty() { RichText::new(contagem) } else { RichText::new(contagem).color(COR_AVISO) });
     ui.separator();
+    let confirmar = if sel.editar { "Salvar / Confirmar (Enter)" } else { "Confirmar comando (Enter)" };
     if ui
-        .add_enabled(fecha, egui::Button::new("Confirmar comando (Enter)"))
+        .add_enabled(fecha, egui::Button::new(confirmar))
         .on_disabled_hover_text("O tipo dos interruptores escolhidos não fecha um esquema: veja a mensagem ao lado")
         .clicked()
     {
@@ -2253,6 +2327,21 @@ fn barra_comando(ui: &mut egui::Ui, uid: u64, st: &Estado, s: &Setup, acoes: &mu
     }
     if ui.button("X Sair (ESC)").on_hover_text("Encerra a ferramenta; o que não foi confirmado não é gravado").clicked() {
         acoes.push(Acao::Entrada(cadcraft_engine::Input::Cancel));
+    }
+}
+
+/// O alternador [ Novo | Editar ] das mini-barras de comando e de circuito: troca o modo pelo comando de seleção.
+fn alternar_modo(ui: &mut egui::Ui, editar: bool, novo: &str, existente: &str, comando: &'static str, acoes: &mut Vec<Acao>) {
+    if ui.selectable_label(!editar, novo).on_hover_text("Monta um novo, com o próximo livre").clicked() && editar {
+        acoes.push(Acao::Rodar(comando, json!({ "modo": "novo" })));
+    }
+    if ui
+        .selectable_label(editar, existente)
+        .on_hover_text("Escolha na lista ou clique num ponto da planta: os pontos dele ficam em destaque para tirar ou pôr")
+        .clicked()
+        && !editar
+    {
+        acoes.push(Acao::Rodar(comando, json!({ "modo": "editar" })));
     }
 }
 
@@ -2312,54 +2401,166 @@ fn barra_eletroduto(ui: &mut egui::Ui, uid: u64, s: &Setup, acoes: &mut Vec<Acao
             acoes.push(Acao::Rodar("eletrica.eletroduto.modelo", json!({ "tracado": tr.codigo() })));
         }
     }
+    ui.separator();
+    // A ponta que vai para outro pavimento: o símbolo é um nó, como uma caixa; o eletroduto termina nele.
+    for (rotulo, bloco, dica) in [
+        (
+            "Eletroduto sobe",
+            ele::biblioteca::BLOCO_SOBE,
+            "Insere o símbolo de eletroduto que sobe (círculo com a seta saindo); depois ligue o eletroduto a ele",
+        ),
+        (
+            "Eletroduto desce",
+            ele::biblioteca::BLOCO_DESCE,
+            "Insere o símbolo de eletroduto que desce (círculo com a seta entrando); depois ligue o eletroduto a ele",
+        ),
+    ] {
+        if ui.button(rotulo).on_hover_text(dica).clicked() {
+            acoes.push(Acao::Rodar("eletrica.ponto.modelo", json!({ "bloco": bloco })));
+            acoes.push(Acao::Iniciar("eleponto"));
+        }
+    }
 }
 
+/// A mini-barra de ELECIRCUITO: novo ou editar, o quadro, o número (o próximo livre, ou um existente para
+/// editar), a descrição, o esquema e a tensão, o que entra e sai, e confirmar, limpar e sair. Tudo fica na
+/// seleção até confirmar.
 fn barra_circuito(ui: &mut egui::Ui, uid: u64, st: &Estado, acoes: &mut Vec<Acao>) {
-    let Some((q, id)) = ele::circuito::ativo(uid) else {
-        ui.label("Selecione o quadro e informe o número do circuito.");
+    const CMD: &str = "eletrica.circuito.selecao";
+    let sel = ele::circuito::selecao_circuito(uid).unwrap_or_default();
+    alternar_modo(ui, sel.editar, "Criar novo circuito", "Editar circuito", CMD, acoes);
+    ui.separator();
+    ui.label("Quadro");
+    let quadros = st.analise.quadros();
+    let atual = sel.quadro.and_then(|h| quadros.iter().find(|q| q.handle == h)).map_or("Escolha o quadro".to_string(), |q| q.rotulo());
+    egui::ComboBox::from_id_salt("ele-barra-circuito-quadro").selected_text(atual).width(100.0).show_ui(ui, |ui| {
+        for q in &quadros {
+            if ui.selectable_label(sel.quadro == Some(q.handle), q.rotulo()).clicked() {
+                acoes.push(Acao::Rodar(CMD, json!({ "quadro": q.handle.hex() })));
+            }
+        }
+    });
+    let Some(q) = sel.quadro else {
+        ui.label(pequeno("Escolha aqui ou clique no quadro na planta.", ui.visuals().weak_text_color()));
         return;
     };
-    let Some(quadro) = st.analise.ponto(q) else { return };
-    let props = ele::quadro::propriedades(quadro);
-    let p = props.iter().find(|(k, _)| k.eq_ignore_ascii_case(&id)).map(|(_, v)| v.clone()).unwrap_or_default();
-    let gravada = ele::quadro::descricoes(quadro).into_iter().find(|(k, _)| k.eq_ignore_ascii_case(&id)).map_or(String::new(), |(_, d)| d);
-    ui.label(RichText::new(format!("Circuito {id} · {}", quadro.rotulo())).strong());
+    let existentes = ele::circuito::circuitos_do_quadro(&st.analise, q);
+    let lista = |ui: &mut egui::Ui, texto: &str, acoes: &mut Vec<Acao>| {
+        egui::ComboBox::from_id_salt("ele-barra-circuitos").selected_text(texto).width(110.0).show_ui(ui, |ui| {
+            if !sel.editar && ui.selectable_label(!sel.manual, "Próximo livre").clicked() {
+                acoes.push(Acao::Rodar(CMD, json!({ "circuito": null })));
+            }
+            for c in &existentes {
+                if ui.selectable_label(sel.carregado && sel.circuito.eq_ignore_ascii_case(c), format!("Circuito {c}")).clicked() {
+                    acoes.push(Acao::Rodar(CMD, json!({ "circuito": c })));
+                }
+            }
+        });
+    };
+    if sel.editar && !sel.carregado {
+        lista(ui, "Escolha o circuito", acoes);
+        ui.label(pequeno("ou clique num ponto do circuito na planta.", ui.visuals().weak_text_color()));
+        ui.separator();
+        if ui.button("X Sair (ESC)").on_hover_text("Encerra a ferramenta").clicked() {
+            acoes.push(Acao::Entrada(cadcraft_engine::Input::Cancel));
+        }
+        return;
+    }
     ui.separator();
-    ui.label("Descrição");
-    // O texto em edição fica na memória da barra até sair do campo.
-    let chave = egui::Id::new(("ele-barra-descricao", q, id.as_str()));
-    let mut texto: String = ui.ctx().data_mut(|d| d.get_temp(chave)).unwrap_or_else(|| gravada.clone());
-    let r = ui.add(egui::TextEdit::singleline(&mut texto).hint_text("Iluminação social").desired_width(180.0));
-    if r.lost_focus() && texto.trim() != gravada {
-        acoes.push(Acao::Rodar("eletrica.circuito.definir", json!({ "quadro": q.hex(), "circuito": id, "descricao": texto.trim() })));
+    let rotulo = ui.label("Número");
+    // Os textos em edição ficam na memória da barra até sair do campo; outro circuito os reinicia.
+    let chave = egui::Id::new(("ele-barra-circuito-numero", uid, q, sel.circuito.as_str()));
+    let mut numero: String = ui.ctx().data_mut(|d| d.get_temp(chave)).unwrap_or_else(|| sel.circuito.clone());
+    let r = ui.add_sized(vec2(44.0, ALTURA_BARRA), egui::TextEdit::singleline(&mut numero)).labelled_by(rotulo.id);
+    if r.lost_focus() && !numero.trim().is_empty() && numero.trim() != sel.circuito {
+        acoes.push(Acao::Rodar(CMD, json!({ "circuito": numero.trim() })));
+    }
+    ui.ctx().data_mut(|d| d.insert_temp(chave, numero));
+    lista(ui, "Editar...", acoes);
+    ui.separator();
+    let rotulo = ui.label("Descrição");
+    let chave = egui::Id::new(("ele-barra-descricao", uid, q, sel.circuito.as_str(), sel.carregado));
+    let mut texto: String = ui.ctx().data_mut(|d| d.get_temp(chave)).unwrap_or_else(|| sel.descricao.clone());
+    let r = ui.add(egui::TextEdit::singleline(&mut texto).hint_text("Iluminação, TUGs Sala...").desired_width(150.0)).labelled_by(rotulo.id);
+    if r.lost_focus() && texto.trim() != sel.descricao {
+        acoes.push(Acao::Rodar(CMD, json!({ "descricao": texto.trim() })));
     }
     ui.ctx().data_mut(|d| d.insert_temp(chave, texto));
-    ui.separator();
     ui.label("Esquema");
-    let atual = p.esquema.map_or("Automático", Esquema::codigo);
-    egui::ComboBox::from_id_salt("ele-barra-esquema").selected_text(atual).width(90.0).show_ui(ui, |ui| {
-        if ui.selectable_label(p.esquema.is_none(), "Automático").clicked() {
-            acoes.push(Acao::Rodar("eletrica.circuito.definir", json!({ "quadro": q.hex(), "circuito": id, "esquema": null })));
-        }
-        for e in Esquema::TODOS {
-            if ui.selectable_label(p.esquema == Some(e), e.codigo()).clicked() {
-                acoes.push(Acao::Rodar("eletrica.circuito.definir", json!({ "quadro": q.hex(), "circuito": id, "esquema": e.codigo() })));
+    egui::ComboBox::from_id_salt("ele-barra-esquema").selected_text(sel.esquema.map_or("Automático", Esquema::codigo)).width(86.0).show_ui(
+        ui,
+        |ui| {
+            if ui.selectable_label(sel.esquema.is_none(), "Automático").clicked() {
+                acoes.push(Acao::Rodar(CMD, json!({ "esquema": null })));
             }
-        }
-    });
-    ui.separator();
+            for e in Esquema::TODOS {
+                if ui.selectable_label(sel.esquema == Some(e), e.codigo()).clicked() {
+                    acoes.push(Acao::Rodar(CMD, json!({ "esquema": e.codigo() })));
+                }
+            }
+        },
+    );
     ui.label("Tensão");
-    let atual = p.tensao.map_or("Dos pontos".to_string(), |t| format!("{} V", fixo(t, 0)));
-    egui::ComboBox::from_id_salt("ele-barra-tensao").selected_text(atual).width(90.0).show_ui(ui, |ui| {
-        if ui.selectable_label(p.tensao.is_none(), "Dos pontos").clicked() {
-            acoes.push(Acao::Rodar("eletrica.circuito.definir", json!({ "quadro": q.hex(), "circuito": id, "tensao": null })));
+    let atual = sel.tensao.map_or("Dos pontos".to_string(), |t| format!("{} V", fixo(t, 0)));
+    egui::ComboBox::from_id_salt("ele-barra-tensao").selected_text(atual).width(86.0).show_ui(ui, |ui| {
+        if ui.selectable_label(sel.tensao.is_none(), "Dos pontos").clicked() {
+            acoes.push(Acao::Rodar(CMD, json!({ "tensao": null })));
         }
         for v in [127.0, 220.0, 380.0] {
-            if ui.selectable_label(p.tensao == Some(v), format!("{} V", fixo(v, 0))).clicked() {
-                acoes.push(Acao::Rodar("eletrica.circuito.definir", json!({ "quadro": q.hex(), "circuito": id, "tensao": v })));
+            if ui.selectable_label(sel.tensao == Some(v), format!("{} V", fixo(v, 0))).clicked() {
+                acoes.push(Acao::Rodar(CMD, json!({ "tensao": v })));
             }
         }
     });
+    ui.separator();
+    let (novos, fora) = sel.diferenca();
+    let mut resumo = format!("Pontos: {}", sel.pontos.len());
+    if sel.carregado {
+        resumo.push_str(&format!(" (+{} / -{})", novos.len(), fora.len()));
+    }
+    ui.label(resumo).on_hover_text("Em destaque na planta: azul, os que já eram do circuito; verde, os que entram; vermelho, os que saem");
+    ui.separator();
+    let pronto = !sel.vazia();
+    let rotulo = if sel.carregado { "Salvar / Confirmar (Enter)" } else { "Confirmar circuito (Enter)" };
+    if ui.add_enabled(pronto, egui::Button::new(rotulo)).on_disabled_hover_text("Clique nos pontos do circuito na planta").clicked() {
+        acoes.push(Acao::RodarComStatus(CMD, json!({ "confirmar": true }), |v| {
+            format!("Circuito {} gravado", v["aplicado"]["circuito"].as_str().unwrap_or("-"))
+        }));
+    }
+    if ui.button("Limpar seleção").clicked() {
+        acoes.push(Acao::Rodar(CMD, json!({ "limpar": true })));
+    }
+    if ui.button("X Sair (ESC)").on_hover_text("Encerra a ferramenta; o que não foi confirmado não é gravado").clicked() {
+        acoes.push(Acao::Entrada(cadcraft_engine::Input::Cancel));
+    }
+}
+
+/// O circuito em montagem no ELECIRCUITO, em destaque no desenho até confirmar: os pontos que já eram dele
+/// (azul), os que entram (verde) e os que saem (vermelho, só o anel).
+fn desenhar_selecao_circuito(painter: &egui::Painter, xf: &crate::canvas::Xf, st: &Estado, uid: u64) {
+    let Some(sel) = ele::circuito::selecao_circuito(uid) else { return };
+    let azul = Tokens::get().accent;
+    let verde = Color32::from_rgb(70, 190, 100);
+    let vermelho = Color32::from_rgb(235, 64, 52);
+    for h in &sel.pontos {
+        let Some(p) = st.analise.ponto(*h) else { continue };
+        let cor = if sel.originais.contains(h) { azul } else { verde };
+        let c = na_tela(xf, p.posicao);
+        painter.circle_filled(c, 14.0, cor.gamma_multiply(0.30));
+        painter.circle_stroke(c, 14.0, Stroke::new(2.5, cor));
+    }
+    for h in sel.originais.iter().filter(|h| !sel.pontos.contains(h)) {
+        let Some(p) = st.analise.ponto(*h) else { continue };
+        let c = na_tela(xf, p.posicao);
+        painter.circle_stroke(c, 14.0, Stroke::new(2.0, vermelho));
+        let d = 6.0;
+        painter.line_segment([c + vec2(-d, -d), c + vec2(d, d)], Stroke::new(2.0, vermelho));
+        painter.line_segment([c + vec2(-d, d), c + vec2(d, -d)], Stroke::new(2.0, vermelho));
+    }
+    if let Some(q) = sel.quadro.and_then(|q| st.analise.ponto(q)) {
+        let c = na_tela(xf, q.posicao);
+        painter.rect_stroke(egui::Rect::from_center_size(c, vec2(26.0, 26.0)), 3.0, Stroke::new(2.0, azul), egui::StrokeKind::Middle);
+    }
 }
 
 // ---------------------------------------------------------------- zona 3: as janelas
@@ -2630,15 +2831,16 @@ fn etapa_diagnostico(
 ) {
     let itens = st.diagnostico(app, s, r.quadro);
     ui.label(RichText::new(format!("Diagnóstico do quadro {}", r.tag)).strong());
-    if itens.is_empty() && r.avisos.is_empty() {
+    if itens.is_empty() {
         ui.label(pequeno("Nenhum problema encontrado: siga para os circuitos.", t.text_dim));
         return;
     }
     let grupos = [
         (Nivel::Vermelho, "Pontos sem circuito e interruptores sem luminária"),
         (Nivel::Laranja, "Pontos e quadro fora da rede de eletrodutos, eletrodutos soltos"),
-        (Nivel::Amarelo, "Ocupação de eletroduto ou queda de tensão acima do limite"),
+        (Nivel::Amarelo, "Avisos dos circuitos e do quadro: tensão, queda, ocupação, alimentador"),
     ];
+    let marcado = trava(&JANELAS).marca;
     for (nivel, titulo) in grupos {
         let deles: Vec<&Item> = itens.iter().filter(|i| i.nivel == nivel).collect();
         if deles.is_empty() {
@@ -2651,18 +2853,15 @@ fn etapa_diagnostico(
                 let nome =
                     if i.eletroduto { "Eletroduto".to_string() } else { analise.ponto(i.handle).map_or_else(|| i.handle.hex(), |p| p.rotulo()) };
                 celula(ui, 180.0, nome.as_str(), false);
-                celula(ui, 420.0, i.motivo.as_str(), false);
-                if ui.small_button("Localizar").clicked() {
+                celula(ui, 520.0, i.motivo.as_str(), false);
+                let botao = egui::Button::new("🔍 Ir para o ponto").selected(marcado == Some(i.pos));
+                if ui.add(botao).on_hover_text("Centraliza o desenho no ponto e o destaca com um círculo").clicked() {
                     acoes.push(Acao::Localizar(vec![i.pos]));
+                    acoes.push(Acao::Marcar(Some(i.pos)));
                 }
                 ui.end_row();
             }
         });
-    }
-    if !r.avisos.is_empty() {
-        ui.add_space(4.0);
-        ui.label(RichText::new("Avisos do quadro").strong());
-        lista_avisos(ui, "ele-diagnostico-avisos", &r.avisos);
     }
 }
 
@@ -3124,6 +3323,17 @@ fn protecao_geral_e_dps(ui: &mut egui::Ui, r: &ele::ResumoQuadro, q: Handle, aco
         ui.label("");
         ui.end_row();
     });
+    if let (Some(s), Some(d)) = (a.secao_sugerida, a.disjuntor) {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(pequeno(format!("O cabo travado não comporta o disjuntor geral de {} A.", br(d)), COR_AVISO));
+            if ui.button(format!("Usar {} mm²", br(s))).on_hover_text("A menor seção com Iz ≥ In (NBR 5410, 5.3.4.1)").clicked() {
+                opcao_do_quadro(acoes, q, "secaoGeral", json!(s));
+            }
+            if ui.button("Cabo automático").on_hover_text("O cabo acompanha o disjuntor geral").clicked() {
+                opcao_do_quadro(acoes, q, "secaoGeral", Value::Null);
+            }
+        });
+    }
     ui.add_space(6.0);
     ui.label(RichText::new("DPS (NBR 5410, 6.3.5)").strong());
     let mut dps = c.tem_dps();
@@ -4608,6 +4818,7 @@ fn janela_setup(ctx: &egui::Context, t: &Tokens, tem_desenho: bool, acoes: &mut 
                 Aba::Criterios => aba_criterios(ui, t, &mut r.setup),
                 Aba::Alturas => aba_alturas(ui, t, &mut r.setup),
                 Aba::Geral => aba_geral(ui, t, &mut r.setup, tem_desenho, acoes),
+                Aba::Comandos => aba_comandos(ui, t, &mut r.setup),
                 Aba::Condutores => aba_condutores(ui, t, &mut r.setup),
                 Aba::Eletrodutos => aba_eletrodutos(ui, t, &mut r.setup),
                 Aba::Agrupamento => aba_agrupamento(ui, t),
@@ -4712,25 +4923,63 @@ fn aba_geral(ui: &mut egui::Ui, t: &Tokens, s: &mut Setup, tem_desenho: bool, ac
         ui.add(campo(&mut s.raio_captura, 0.01..=5.0, 0.01, 2, " m"))
             .on_hover_text("Distância máxima entre um bloco e a ponta do eletroduto que chega nele, e dos cliques nos blocos e eletrodutos");
         ui.end_row();
-        ui.label("Escopo da sequência de comandos")
-            .on_hover_text("A próxima letra do Comandos e luminárias olha todos os interruptores e luminárias deste escopo");
-        egui::ComboBox::from_id_salt("ele-escopo-comandos").selected_text(s.escopo_comandos.nome()).width(230.0).show_ui(ui, |ui| {
-            for e in ele::setup::EscopoComandos::TODOS {
-                ui.selectable_value(&mut s.escopo_comandos, e, e.nome());
-            }
-        });
-        ui.end_row();
         ui.label("Fonte padrão dos textos e tabelas no desenho:").on_hover_text(
             "Estilo de texto FREE_ELETRICA: tabelas, quadro de cargas, unifilar, vista frontal, legendas e tags. Atualizar tags e tabelas aplica a fonte nova",
         );
-        egui::ComboBox::from_id_salt("ele-fonte-textos").selected_text(s.fonte_textos.nome()).width(230.0).show_ui(ui, |ui| {
-            for f in ele::setup::FonteTexto::TODAS {
-                let dica = if f.truetype() {
-                    "TrueType: acentos e ç em qualquer programa que tenha a fonte instalada"
-                } else {
-                    "SHX do AutoCAD: os acentos dependem do arquivo da fonte; sem ele, o CADCraft usa a fonte substituta"
-                };
-                ui.selectable_value(&mut s.fonte_textos, f, f.nome()).on_hover_text(dica);
+        escolher_fonte(ui, s);
+        ui.end_row();
+    });
+    ui.label(pequeno("Os eletrodutos correm no teto, no piso ou na parede; cada ponta desce ou sobe até a altura do bloco.", t.text_dim));
+}
+
+/// A fonte dos textos no desenho: as predefinidas primeiro (todas com acentos) e, embaixo, todas as TrueType e
+/// OpenType instaladas no computador, com uma busca.
+fn escolher_fonte(ui: &mut egui::Ui, s: &mut Setup) {
+    let chave = egui::Id::new("ele-fonte-busca");
+    let mut busca: String = ui.ctx().data_mut(|d| d.get_temp(chave)).unwrap_or_default();
+    egui::ComboBox::from_id_salt("ele-fonte-textos").selected_text(s.fonte_textos.nome()).width(230.0).height(360.0).show_ui(ui, |ui| {
+        ui.set_min_width(260.0);
+        for (nome, arquivo) in ele::setup::FonteTexto::PREDEFINIDAS {
+            let f = ele::setup::FonteTexto::de_arquivo(arquivo);
+            let dica = if f.truetype() {
+                "TrueType: acentos e ç em qualquer programa que tenha a fonte instalada"
+            } else {
+                "SHX do AutoCAD: os acentos dependem do arquivo da fonte; sem ele, o CADCraft usa a fonte substituta"
+            };
+            if ui.selectable_label(s.fonte_textos == f, nome).on_hover_text(dica).clicked() {
+                s.fonte_textos = f;
+            }
+        }
+        ui.separator();
+        ui.label(pequeno("Fontes instaladas no computador", ui.visuals().weak_text_color()));
+        ui.add(egui::TextEdit::singleline(&mut busca).hint_text("Pesquisar fonte...").desired_width(240.0));
+        let chave_busca = ele::ponto::normalizar(busca.trim());
+        let instaladas = ele::setup::fontes_instaladas();
+        let achadas: Vec<&String> =
+            instaladas.iter().filter(|a| chave_busca.is_empty() || ele::ponto::normalizar(a).contains(&chave_busca)).collect();
+        if achadas.is_empty() {
+            ui.label(pequeno("Nenhuma fonte com esse nome.", ui.visuals().weak_text_color()));
+        }
+        egui::ScrollArea::vertical().id_salt("ele-fontes-instaladas").max_height(220.0).show(ui, |ui| {
+            for a in achadas {
+                let f = ele::setup::FonteTexto::de_arquivo(a);
+                if ui.selectable_label(s.fonte_textos == f, ele::setup::nome_da_fonte(a)).on_hover_text(a.as_str()).clicked() {
+                    s.fonte_textos = f;
+                }
+            }
+        });
+    });
+    ui.ctx().data_mut(|d| d.insert_temp(chave, busca));
+}
+
+/// A sequência das letras de comando: onde ela não repete e o que vem depois do z.
+fn aba_comandos(ui: &mut egui::Ui, t: &Tokens, s: &mut Setup) {
+    egui::Grid::new("ele-setup-comandos").num_columns(2).spacing(vec2(12.0, 6.0)).show(ui, |ui| {
+        ui.label("Escopo da sequência de comandos")
+            .on_hover_text("A próxima letra do Criar / editar comando olha todos os interruptores e luminárias deste escopo");
+        egui::ComboBox::from_id_salt("ele-escopo-comandos").selected_text(s.escopo_comandos.nome()).width(230.0).show_ui(ui, |ui| {
+            for e in ele::setup::EscopoComandos::TODOS {
+                ui.selectable_value(&mut s.escopo_comandos, e, e.nome());
             }
         });
         ui.end_row();
@@ -4742,7 +4991,10 @@ fn aba_geral(ui: &mut egui::Ui, t: &Tokens, s: &mut Setup, tem_desenho: bool, ac
         });
         ui.end_row();
     });
-    ui.label(pequeno("Os eletrodutos correm no teto, no piso ou na parede; cada ponta desce ou sobe até a altura do bloco.", t.text_dim));
+    ui.label(pequeno(
+        "Global: a, b, c... nunca repetem no projeto. Por quadro: cada quadro recomeça em a. Depois do z vêm aa, bb... ou a1, b1...",
+        t.text_dim,
+    ));
 }
 
 fn aba_condutores(ui: &mut egui::Ui, t: &Tokens, s: &mut Setup) {

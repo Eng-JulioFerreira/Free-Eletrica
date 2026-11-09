@@ -144,7 +144,9 @@ pub fn inspecionar(doc: &Drawing, analise: &Analise, setup: &Setup) -> Vec<Item>
 
 /// Os problemas de um quadro antes de dimensionar, do mais grave ao menos: os pontos sem circuito (ainda sem
 /// quadro), os pontos dos circuitos dele sem caminho de eletrodutos ou com queda acima do limite, o próprio
-/// quadro desligado da rede, os eletrodutos soltos e os trechos dos circuitos dele com ocupação acima do limite.
+/// quadro desligado da rede, os eletrodutos soltos, os trechos dos circuitos dele com ocupação acima do limite e
+/// os avisos de cada circuito e do quadro (tensão divergente, mistura de cargas, alimentador...), cada um no
+/// ponto a que se refere.
 pub fn diagnostico(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -> Vec<Item> {
     let trechos_do_quadro: Vec<Handle> =
         fiacao::calcular(doc, analise, setup, quadro).map(|f| f.trechos.iter().map(|t| t.handle).collect()).unwrap_or_default();
@@ -153,7 +155,7 @@ pub fn diagnostico(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Hand
         .iter()
         .map(|s| s.eletroduto)
         .collect();
-    inspecionar(doc, analise, setup)
+    let mut itens: Vec<Item> = inspecionar(doc, analise, setup)
         .into_iter()
         .filter(|i| i.nivel != Nivel::Verde)
         .filter(|i| {
@@ -165,5 +167,58 @@ pub fn diagnostico(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Hand
             }
             analise.ponto(i.handle).is_some_and(|p| p.tipo != TipoPonto::Quadro && (p.circuito.is_none() || p.quadro == Some(quadro)))
         })
-        .collect()
+        .collect();
+    itens.extend(avisos_do_quadro(doc, analise, setup, quadro));
+    itens.sort_by_key(|i| i.nivel);
+    itens
+}
+
+/// Os avisos dos circuitos e do quadro, em amarelo, no ponto a que cada um se refere: a tensão divergente em
+/// cada ponto que diverge, a tensão do circuito fora das do quadro nos pontos dele, os outros avisos do
+/// circuito no primeiro ponto dele e os do quadro (alimentador, fases, DPS) no próprio quadro.
+fn avisos_do_quadro(doc: &Drawing, analise: &Analise, setup: &Setup, quadro: Handle) -> Vec<Item> {
+    let Ok(r) = quadro::rotear(doc, analise, setup, quadro) else { return Vec::new() };
+    let Some(q) = analise.ponto(quadro) else { return Vec::new() };
+    let br = crate::ponto::br;
+    let mut itens = Vec::new();
+    let mut aviso = |p: &crate::PontoEletrico, motivo: String| {
+        if !itens.iter().any(|i: &Item| i.handle == p.handle && i.motivo == motivo) {
+            itens.push(Item { handle: p.handle, pos: p.posicao, nivel: Nivel::Amarelo, motivo, eletroduto: false });
+        }
+    };
+    let do_quadro = [r.tensao_fn, r.tensao_ff];
+    for l in &r.linhas {
+        let id = &l.circuito.id;
+        let cargas: Vec<&crate::PontoEletrico> = l.circuito.pontos.iter().filter_map(|h| analise.ponto(*h)).filter(|p| p.tipo.e_carga()).collect();
+        let Some(primeiro) = l.circuito.pontos.iter().find_map(|h| analise.ponto(*h)) else { continue };
+        let fora = |t: f64| do_quadro.iter().all(|v| (v - t).abs() > 1.0);
+        for p in &cargas {
+            let Some(t) = p.tensao else { continue };
+            if (t - l.tensao).abs() > 1.0 {
+                aviso(p, format!("Circuito {id}: ponto com tensão divergente ({} V; o circuito está em {} V)", br(t), br(l.tensao)));
+            } else if fora(t) {
+                aviso(
+                    p,
+                    format!("Circuito {id}: ponto com tensão de {} V, diferente das do quadro ({}/{} V)", br(t), br(r.tensao_ff), br(r.tensao_fn)),
+                );
+            }
+        }
+        if cargas.iter().all(|p| p.tensao.is_none()) && fora(l.tensao) {
+            aviso(
+                primeiro,
+                format!("Circuito {id}: tensão de {} V, diferente das do quadro ({}/{} V)", br(l.tensao), br(r.tensao_ff), br(r.tensao_fn)),
+            );
+        }
+        let mut outros: Vec<&String> = l.circuito.avisos.iter().chain(&l.escolha.avisos).collect();
+        outros.sort();
+        outros.dedup();
+        // A tensão divergente já está nos pontos, e a queda acima do limite já está na inspeção.
+        for a in outros.into_iter().filter(|a| !a.contains("tensões diferentes") && !a.starts_with("queda de tensão acima")) {
+            aviso(primeiro, format!("Circuito {id}: {a}"));
+        }
+    }
+    for a in &r.avisos {
+        aviso(q, a.clone());
+    }
+    itens
 }

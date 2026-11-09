@@ -560,9 +560,9 @@ pub fn texto_cabos(cabos: &[CaboNoTrecho]) -> String {
     por_cabo.into_iter().map(|(c, n)| format!("{n}x {c}")).collect::<Vec<_>>().join(" + ")
 }
 
-/// O diâmetro do eletroduto, o texto de baixo da tag: `%%c25` (`%%c` é o Ø do CAD).
+/// O diâmetro do eletroduto, o texto de baixo da tag: `Ø25` (o mesmo da tag elétrica).
 pub fn texto_diametro(diametro: Option<f64>) -> String {
-    diametro.map_or_else(|| "%%c?".to_string(), |n| format!("%%c{}", br(n)))
+    crate::fiacao::texto_diametro(diametro)
 }
 
 /// O menor eletroduto do trecho com os cabos até [`OCUPACAO_MAXIMA`]; um diâmetro travado só tem a ocupação
@@ -860,7 +860,7 @@ pub fn inserir_tabela(doc: &mut Drawing, analise: &Analise, setup: &Setup, rack:
     if !pos.iter().all(|v| v.is_finite()) {
         return Err("posição inválida".into());
     }
-    crate::tabela::garantir_estilo(doc, setup.fonte_textos);
+    crate::tabela::garantir_estilo(doc, &setup.fonte_textos);
     let t = rotear(doc, analise, setup);
     let r = t.racks.iter().find(|r| r.rack == rack).ok_or_else(|| format!("o objeto {} não é um rack / quadro VDI", rack.hex()))?;
     gravar_tabela(doc, r, metros_por_unidade(doc, setup));

@@ -103,7 +103,7 @@ pub const ESTILO_TEXTO: &str = "FREE_ELETRICA";
 
 /// Cria o estilo [`ESTILO_TEXTO`] ou troca a fonte dele pela das configurações. Os textos já desenhados com ele
 /// mudam junto.
-pub fn garantir_estilo(doc: &mut Drawing, fonte: crate::setup::FonteTexto) {
+pub fn garantir_estilo(doc: &mut Drawing, fonte: &crate::setup::FonteTexto) {
     let arquivo = fonte.arquivo();
     match doc.text_styles.iter_mut().find(|s| s.name.eq_ignore_ascii_case(ESTILO_TEXTO)) {
         Some(s) => {
@@ -396,7 +396,7 @@ pub fn inserir(doc: &mut Drawing, analise: &Analise, setup: &Setup, quadro: Hand
         return Err("posição inválida".into());
     }
     let r = quadro::rotear(doc, analise, setup, quadro)?;
-    garantir_estilo(doc, setup.fonte_textos);
+    garantir_estilo(doc, &setup.fonte_textos);
     gravar_bloco(doc, &r, if r.metros_por_unidade > 0.0 { r.metros_por_unidade } else { 1.0 });
     if let Some((h, _)) = tabelas(doc).into_iter().find(|(_, q)| *q == quadro)
         && let Some(mut e) = doc.model.get(h).map(|e| (**e).clone())

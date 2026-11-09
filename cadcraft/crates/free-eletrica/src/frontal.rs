@@ -434,7 +434,7 @@ pub fn gerar(doc: &mut Drawing, analise: &Analise, setup: &Setup, quadro: Handle
         return Err("posição inválida".into());
     }
     let r = quadro::rotear(doc, analise, setup, quadro)?;
-    crate::tabela::garantir_estilo(doc, setup.fonte_textos);
+    crate::tabela::garantir_estilo(doc, &setup.fonte_textos);
     gravar_bloco(doc, &r);
     if let Some((h, _)) = vistas(doc).into_iter().find(|(_, q)| *q == quadro) {
         if let (Some(p), Some(mut e)) = (pos, doc.model.get(h).map(|e| (**e).clone())) {

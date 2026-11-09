@@ -829,7 +829,16 @@ fn texto(valor: String, em: [f64; 2], altura: f64) -> EntityKind {
     })
 }
 
-/// Largura estimada de um texto (m) na fonte Standard (`%%c`, o símbolo de diâmetro, conta como um).
+/// O símbolo de diâmetro das tags: o `Ø` (U+00D8), que existe em todas as fontes TrueType e SHX. O `%%c` do
+/// CAD vira o `⌀` (U+2300), que falta em Arial, Calibri e Tahoma e sai como um quadrado vazio.
+pub const DIAMETRO: char = 'Ø';
+
+/// O diâmetro do eletroduto, o texto de baixo da tag: `Ø25`, ou `Ø?` sem ele.
+pub fn texto_diametro(diametro: Option<f64>) -> String {
+    diametro.map_or_else(|| format!("{DIAMETRO}?"), |n| format!("{DIAMETRO}{}", br(n)))
+}
+
+/// Largura estimada de um texto (m): `%%c`, de desenhos antigos, conta como um caractere.
 pub fn largura_texto(texto: &str, altura: f64) -> f64 {
     texto.replace("%%c", "Ø").chars().count() as f64 * crate::tabela::LARGURA_CARACTERE * altura
 }
@@ -961,7 +970,7 @@ fn bloco_da_tag(
         pecas.push(texto("?".into(), [centro, acima], ALTURA_TEXTO / m));
     }
     // Na linha de baixo, centrado sob toda a simbologia: o diâmetro do eletroduto do trecho.
-    let d = diametro.map_or_else(|| "%%c?".to_string(), |n| format!("%%c{}", br(n)));
+    let d = texto_diametro(diametro);
     pecas.push(texto(d, [centro, -AFASTAMENTO_DIAMETRO / m], ALTURA_DIAMETRO / m));
     let reta = |a: [f64; 2], b: [f64; 2]| EntityKind::Line(Line { a: Vec3::new(a[0], a[1], 0.0), b: Vec3::new(b[0], b[1], 0.0) });
     match ligacao {
@@ -1108,7 +1117,7 @@ fn ajustar_chamada(doc: &Drawing, eletroduto: Handle, c: Chamada, m: f64) -> Cha
 /// `tag`, o início da base. No modo direto, `tag` não conta. Uma tag que já existe passa para essa
 /// geometria. Devolve a tag.
 pub fn criar_tag(doc: &mut Drawing, setup: &Setup, eletroduto: Handle, modo: ModoTag, ancora: [f64; 2], tag: [f64; 2]) -> Result<Handle, String> {
-    crate::tabela::garantir_estilo(doc, setup.fonte_textos);
+    crate::tabela::garantir_estilo(doc, &setup.fonte_textos);
     let tag = if modo == ModoTag::Direto { ancora } else { tag };
     if !ancora.iter().chain(tag.iter()).all(|v| v.is_finite()) {
         return Err("ponto inválido".into());
@@ -1197,7 +1206,7 @@ pub fn regenerar(doc: &mut Drawing, setup: &Setup, criar: Option<&[Handle]>) -> 
     crate::eletroduto::aparar(doc, setup, m, None);
     crate::biblioteca::encaixar_textos_de_luz(doc, None);
     let analise = crate::analisar(doc);
-    crate::tabela::garantir_estilo(doc, setup.fonte_textos);
+    crate::tabela::garantir_estilo(doc, &setup.fonte_textos);
     let (trechos, soltos, avisos) = todos_os_trechos(doc, &analise, setup);
     let mut reg = Regeneracao { avisos, ..Regeneracao::default() };
     reg.apagadas += apagar_marcas_antigas(doc);

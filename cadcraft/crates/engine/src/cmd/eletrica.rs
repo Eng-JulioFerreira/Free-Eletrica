@@ -39,7 +39,9 @@ pub fn specs() -> Vec<CommandSpec> {
             .params("{interruptor: hex | interruptores: [hex] (the block's switch type decides: a simple switch alone, or two parallel ones with intermediate ones between them; the parallel clicked first gets the phase), luminarias: [hex], comando?: a, b... aa, a1 (default: with every key used, the switch's last command; otherwise the next free one in the project, or in the board, as the settings say)} (switches and lamps of the scope that had the command and were left out lose it) → {comando, circuito, luminarias, interruptores: [{interruptor, papel}], avisos}")
             .interactive(|_| Ok(Box::new(ComandoM::default()))),
         CommandSpec::new("eletrica.comando.selecao", "Switch Command Selection", run_comando_selecao)
-            .params("{comando?: text | null (a command in use loads its switches and lamps to edit; null: back to the next free one), adicionar?: [hex] (switches and lamps; a second time takes them out), limpar?: bool, confirmar?: bool (writes the command; the scheme comes from each block's switch type, never changed: a simple switch alone, or two parallel ones at the ends with the intermediate ones between them; anything else is refused)} → the command being built in ELECOMANDO, also while it runs (the mini-bar): {comando, manual, interruptores, luminarias, esquema, emUso, aplicado?}"),
+            .params("{modo?: novo | editar (editar: the first switch or lamp clicked that has a command loads it; clears the selection), comando?: text | null (a command in use loads its switches and lamps to edit; null: back to the next free one), adicionar?: [hex] (switches and lamps; a second time takes them out), limpar?: bool, confirmar?: bool (writes the command; the scheme comes from each block's switch type, never changed: a simple switch alone, or two parallel ones at the ends with the intermediate ones between them; anything else is refused)} → the command being built in ELECOMANDO, also while it runs (the mini-bar): {comando, manual, editar, interruptores, luminarias, esquema, emUso, aplicado?}"),
+        CommandSpec::new("eletrica.circuito.selecao", "Circuit Selection", run_circuito_selecao)
+            .params("{modo?: novo | editar (editar: the first point clicked that has a circuit loads it; clears the selection), quadro?: hex | TAG (starts a new circuit there), circuito?: text | null (an existing one loads its points, description, scheme and voltage to edit; null: back to the next free number), adicionar?: [hex] (points; a second time takes them out; a board picks the board), descricao?: text, esquema?: \"F+N\" | \"F+N+T\" | \"2F+T\" | \"2F+N+T\" | \"3F+T\" | \"3F+N+T\" | null, tensao?: V | null, limpar?: bool, confirmar?: bool (writes the circuit: its data on the board, the marked points in it and, editing, the unmarked ones out)} → the circuit being built in ELECIRCUITO, also while it runs (the mini-bar): {quadro, circuito, manual, editar, carregado, descricao, esquema, tensao, pontos, originais, circuitos, aplicado?}"),
         CommandSpec::new("elefiacao", "Wiring Tags", run_fiacao)
             .params("{quadro?: hex | TAG, eletrodutos?: [hex], limpar?: bool (erase the tags), ancora?: [x, y] (the point on the conduit), modo?: direct | leader (default: direct without `tag`, leader with it), tag?: [x, y] (leader: where the base line starts; the leader takes the angle of the two points), eletroduto?: hex (default: the conduit at `ancora`)} (default: every conduit, at its middle) → {tags, criadas, apagadas, tabelas, avisos} or {tag}")
             .interactive(|_| Ok(Box::new(FiacaoM::default()))),
@@ -91,6 +93,13 @@ pub fn specs() -> Vec<CommandSpec> {
             .interactive(|_| Ok(Box::new(ConectorM))),
         CommandSpec::new("eletrica.materiais", "Materials List", run_materiais)
             .params("{} → {cabos: [{secao, tipo, nome, funcao: faseR | faseS | faseT | neutro | retorno | protecao, cor, metros, rolos, descricao}], eletrodutos: [{tipo, diametro, metros}], caixas, pontos, conjuntos, disjuntores, quadros, gruposDr, pontosSemCaixa, eletrodutosSoltos, cabosTelecom, telecom, avisos}")
+            .noundo(),
+        CommandSpec::new("eletrica.materiais.exportar", "Export Materials List", run_materiais_exportar)
+            .params("{arquivo: path (.csv)} → writes the materials list as a spreadsheet for Excel in Portuguese (UTF-8 with BOM, `;` between columns, decimal comma): Categoria, Item / Descrição, Isolação / Especificação, Cor / Função, Unidade, Quantidade: {arquivo, itens}")
+            .noundo(),
+        CommandSpec::new("eletrica.fontes", "Text Fonts", run_fontes)
+            .params("{} → the fonts for the drawing texts: {predefinidas: [{nome, arquivo}], instaladas: [file] (TrueType and OpenType installed on this computer), atual}")
+            .enabled(always)
             .noundo(),
         CommandSpec::new("eletrica.dimensionar", "Size Board", run_dimensionar)
             .params("{quadro?: hex | TAG (default: every board), compartilharPe?: bool, temperaturaAmbiente?: °C, fcaManual?: number | null, criterioDisjuntor?: correnteProjetoIb | capacidadeCaboIz, metodoInstalacao?: A1 | A2 | B1 | B2 | C | D | E | F, unifilar?: bool (also generates or updates the single-line diagram), frontal?: bool (also generates or updates the front view, and so the single-line diagram)} → applies the options, sizes the circuits, stores the result on the boards and updates tags, tables and diagrams: {quadros: [{tag, circuitos, avisos}], circuitos, avisos, unifilares, frontais}"),
@@ -653,6 +662,36 @@ fn run_definir(s: &mut Session, p: &Value) -> Result<Value> {
     }
     d.gravar(s, q, &id)?;
     Ok(json!({ "quadro": q.hex(), "circuito": id }))
+}
+
+fn run_materiais_exportar(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "eletrica.materiais.exportar";
+    let arquivo = texto(CMD, p, "arquivo")?;
+    let caminho = caminho_csv(&arquivo);
+    let a = analise(s)?;
+    let n = ele::materiais::exportar_planilha(s.doc()?, &a, &ele::setup::atual(), &caminho).map_err(erro)?;
+    Ok(json!({ "arquivo": caminho.to_string_lossy(), "itens": n }))
+}
+
+/// O arquivo da planilha sempre em `.csv`: sem extensão, ganha; com outra (o diálogo de salvar pode pôr a do
+/// desenho, `Lista.csv.dxf`), ela sai.
+fn caminho_csv(arquivo: &str) -> std::path::PathBuf {
+    let mut c = std::path::PathBuf::from(arquivo);
+    let e_csv = |c: &std::path::Path| c.extension().is_some_and(|e| e.eq_ignore_ascii_case("csv"));
+    if !e_csv(&c) {
+        let sem = c.with_extension("");
+        c = if c.extension().is_some() && e_csv(&sem) { sem } else { c.with_extension("csv") };
+    }
+    c
+}
+
+fn run_fontes(_s: &mut Session, _p: &Value) -> Result<Value> {
+    let predefinidas: Vec<Value> = ele::setup::FonteTexto::PREDEFINIDAS.iter().map(|(n, a)| json!({ "nome": n, "arquivo": a })).collect();
+    Ok(json!({
+        "predefinidas": predefinidas,
+        "instaladas": ele::setup::fontes_instaladas(),
+        "atual": ele::setup::atual().fonte_textos.arquivo(),
+    }))
 }
 
 fn run_materiais(s: &mut Session, _p: &Value) -> Result<Value> {
@@ -1542,59 +1581,236 @@ fn run_circuito(s: &mut Session, p: &Value) -> Result<Value> {
 /// O campo que ELECIRCUITO está perguntando.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Campo {
+    Numero,
     Descricao,
     Esquema,
     Tensao,
 }
 
+/// O circuito em montagem no desenho, criado no modo Novo quando ainda não existe.
+fn selecao_do_circuito(s: &Session) -> Result<ele::circuito::SelecaoCircuito> {
+    if let Some(sel) = ele::circuito::selecao_circuito(s.state()?.uid) {
+        return Ok(sel);
+    }
+    Ok(ele::circuito::SelecaoCircuito::nova(&analise(s)?, None, false))
+}
+
+/// Guarda o circuito em montagem; sem o número escolhido à mão, ele acompanha o próximo livre do quadro.
+fn guardar_circuito(s: &Session, mut sel: ele::circuito::SelecaoCircuito) -> Result<ele::circuito::SelecaoCircuito> {
+    if !sel.manual {
+        sel.circuito = match sel.quadro {
+            Some(q) => ele::circuito::proximo_circuito(&analise(s)?.pontos, q),
+            None => String::new(),
+        };
+    }
+    ele::circuito::definir_selecao_circuito(s.state()?.uid, Some(sel.clone()));
+    Ok(sel)
+}
+
+/// Escolhe o número do circuito. Um que já existe no quadro traz os pontos e os dados dele, para editar.
+fn escolher_circuito(s: &Session, texto: &str) -> std::result::Result<ele::circuito::SelecaoCircuito, String> {
+    let mut sel = selecao_do_circuito(s).map_err(|e| e.to_string())?;
+    let id = texto.trim();
+    if id.is_empty() {
+        return Err("informe o número do circuito".into());
+    }
+    let q = sel.quadro.ok_or("escolha o quadro antes do circuito")?;
+    let a = analise(s).map_err(|e| e.to_string())?;
+    if ele::circuito::circuito_existe(&a, q, id) {
+        sel = ele::circuito::carregar_circuito(&a, q, id);
+    } else {
+        sel.circuito = id.to_string();
+        sel.manual = true;
+        sel.carregado = false;
+        sel.originais.clear();
+    }
+    guardar_circuito(s, sel).map_err(|e| e.to_string())
+}
+
+/// Troca o modo do ELECIRCUITO: `novo` ou `editar` (clicar num ponto, ou escolher na lista, traz um circuito).
+/// Fica no mesmo quadro e limpa o que estava clicado.
+fn modo_do_circuito(s: &Session, modo: &str) -> std::result::Result<(), String> {
+    let editar = match modo.trim().to_lowercase().as_str() {
+        "novo" | "new" => false,
+        "editar" | "edit" => true,
+        _ => return Err(format!("modo \"{modo}\": use novo ou editar")),
+    };
+    let quadro = selecao_do_circuito(s).map_err(|e| e.to_string())?.quadro;
+    let a = analise(s).map_err(|e| e.to_string())?;
+    guardar_circuito(s, ele::circuito::SelecaoCircuito::nova(&a, quadro, editar)).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Os cliques do ELECIRCUITO: um quadro começa um circuito novo nele; no modo Editar, o primeiro ponto com
+/// circuito traz o circuito dele; depois, cada ponto entra (ou sai, num segundo clique).
+fn clicar_no_circuito(s: &mut Session, hs: &[Handle]) -> Result<()> {
+    let mut sel = selecao_do_circuito(s)?;
+    let a = analise(s)?;
+    for h in hs {
+        let Some(p) = a.ponto(*h) else {
+            s.echo("O objeto não é um ponto elétrico (bloco com TIPO_PONTO, POTENCIA, CIRCUITO...).");
+            continue;
+        };
+        if p.tipo == TipoPonto::Quadro {
+            sel = ele::circuito::SelecaoCircuito::nova(&a, Some(*h), sel.editar);
+            s.echo(format!("Quadro {}.", p.rotulo()));
+            continue;
+        }
+        if sel.editar && !sel.carregado {
+            match p.quadro.zip(p.circuito.clone()) {
+                Some((q, c)) => {
+                    sel = ele::circuito::carregar_circuito(&a, q, &c);
+                    s.echo(format!("Circuito {}: {} ponto(s) para editar.", sel.circuito, sel.pontos.len()));
+                }
+                None => s.echo(format!("{}: sem circuito. Clique num ponto que já tem circuito, ou escolha o circuito na lista.", p.rotulo())),
+            }
+            continue;
+        }
+        if sel.quadro.is_none() {
+            match p.quadro {
+                Some(q) => sel.quadro = Some(q),
+                None => {
+                    s.echo("Escolha o quadro na barra, ou clique nele, antes dos pontos.");
+                    continue;
+                }
+            }
+        }
+        if let Some(i) = sel.pontos.iter().position(|x| x == h) {
+            sel.pontos.remove(i);
+        } else {
+            sel.pontos.push(*h);
+        }
+    }
+    let sel = guardar_circuito(s, sel)?;
+    let (novos, fora) = sel.diferenca();
+    s.echo(format!("Circuito {}: {} ponto(s) ({} entram, {} saem).", sel.circuito, sel.pontos.len(), novos.len(), fora.len()));
+    Ok(())
+}
+
+/// Grava o circuito em montagem e prepara o próximo, no mesmo quadro e no mesmo modo.
+fn confirmar_circuito(s: &mut Session) -> Result<ele::editar::CircuitoAplicado> {
+    let sel = selecao_do_circuito(s)?;
+    let feito = ele::editar::aplicar_circuito(s.doc_mut()?, &sel).map_err(erro)?;
+    s.echo(format!("Circuito {}: {} ponto(s) ({} entraram, {} saíram).", feito.circuito, feito.pontos, feito.adicionados, feito.retirados));
+    let a = analise(s)?;
+    guardar_circuito(s, ele::circuito::SelecaoCircuito::nova(&a, sel.quadro, sel.editar))?;
+    Ok(feito)
+}
+
+/// Um dado do circuito em montagem (descrição, esquema, tensão), na seleção: vai para o quadro ao confirmar.
+fn dado_do_circuito(s: &Session, campo: Campo, v: &Value) -> std::result::Result<(), String> {
+    let mut sel = selecao_do_circuito(s).map_err(|e| e.to_string())?;
+    let texto = v.as_str().map(str::trim);
+    match campo {
+        Campo::Numero => return escolher_circuito(s, texto.unwrap_or("")).map(|_| ()),
+        Campo::Descricao => sel.descricao = texto.ok_or("a descrição é um texto")?.to_string(),
+        Campo::Esquema => {
+            sel.esquema = match texto.filter(|t| !t.is_empty()) {
+                None if v.is_null() || texto.is_some() => None,
+                None => return Err("use F+N, F+N+T, 2F+T, 2F+N+T, 3F+T ou 3F+N+T".into()),
+                Some(t) => Some(ele::nbr5410::Esquema::de_codigo(t).ok_or("use F+N, F+N+T, 2F+T, 2F+N+T, 3F+T ou 3F+N+T")?),
+            }
+        }
+        Campo::Tensao => {
+            sel.tensao = if v.is_null() || texto.is_some_and(str::is_empty) {
+                None
+            } else {
+                let t = v.as_f64().or_else(|| texto.and_then(ele::ponto::numero)).ok_or("tensão inválida")?;
+                if !(t.is_finite() && t > 0.0) {
+                    return Err("tensão inválida".into());
+                }
+                Some(t)
+            }
+        }
+    }
+    guardar_circuito(s, sel).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn json_do_circuito(s: &Session, sel: &ele::circuito::SelecaoCircuito) -> Result<Value> {
+    let a = analise(s)?;
+    let circuitos = sel.quadro.map(|q| ele::circuito::circuitos_do_quadro(&a, q)).unwrap_or_default();
+    let mut v = json_de(sel)?;
+    if let Value::Object(m) = &mut v {
+        m.insert("circuitos".into(), json!(circuitos));
+    }
+    Ok(v)
+}
+
+fn run_circuito_selecao(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "eletrica.circuito.selecao";
+    if let Some(v) = p.get("modo") {
+        let m = v.as_str().ok_or_else(|| bad(CMD, "`modo` must be novo or editar"))?;
+        modo_do_circuito(s, m).map_err(|e| bad(CMD, e))?;
+    }
+    if p.get("quadro").is_some() {
+        let a = analise(s)?;
+        let q = achar_quadro(&a, p.get("quadro"))?;
+        let editar = selecao_do_circuito(s)?.editar;
+        guardar_circuito(s, ele::circuito::SelecaoCircuito::nova(&a, Some(q), editar))?;
+    }
+    match p.get("circuito") {
+        None => {}
+        Some(Value::Null) => {
+            let mut sel = selecao_do_circuito(s)?;
+            sel.manual = false;
+            sel.carregado = false;
+            sel.originais.clear();
+            guardar_circuito(s, sel)?;
+        }
+        Some(v) => {
+            let t = v
+                .as_str()
+                .map(str::to_string)
+                .or_else(|| v.as_u64().map(|n| n.to_string()))
+                .ok_or_else(|| bad(CMD, "`circuito` must be text or null"))?;
+            escolher_circuito(s, &t).map_err(|e| bad(CMD, e))?;
+        }
+    }
+    if p.get("limpar").and_then(Value::as_bool).unwrap_or(false) {
+        let mut sel = selecao_do_circuito(s)?;
+        sel.pontos.clear();
+        guardar_circuito(s, sel)?;
+    }
+    for (k, campo) in [("descricao", Campo::Descricao), ("esquema", Campo::Esquema), ("tensao", Campo::Tensao)] {
+        if let Some(v) = p.get(k) {
+            dado_do_circuito(s, campo, v).map_err(|e| bad(CMD, format!("`{k}`: {e}")))?;
+        }
+    }
+    if let Some(v) = p.get("adicionar") {
+        let hs = v
+            .as_array()
+            .ok_or_else(|| bad(CMD, "`adicionar` must be [hex]"))?
+            .iter()
+            .map(|x| x.as_str().and_then(Handle::parse_hex).ok_or_else(|| bad(CMD, "`adicionar` must be [hex]")))
+            .collect::<Result<Vec<Handle>>>()?;
+        clicar_no_circuito(s, &hs)?;
+    }
+    if p.get("confirmar").and_then(Value::as_bool).unwrap_or(false) {
+        let feito = confirmar_circuito(s).map_err(|e| bad(CMD, e.to_string()))?;
+        let mut v = json_do_circuito(s, &selecao_do_circuito(s)?)?;
+        if let Value::Object(m) = &mut v {
+            m.insert("aplicado".into(), json_de(&feito)?);
+        }
+        return Ok(v);
+    }
+    let sel = guardar_circuito(s, selecao_do_circuito(s)?)?;
+    json_do_circuito(s, &sel)
+}
+
+/// ELECIRCUITO: a mini-barra mostra o quadro, o número (o próximo livre, ou um existente para editar), a
+/// descrição, o esquema e a tensão, e os pontos clicados ficam em destaque. Um segundo clique tira o ponto; um
+/// quadro troca o quadro. Enter grava e já prepara o próximo; Enter sem nada, ou Esc, sai. No modo Editar, o
+/// primeiro clique num ponto com circuito traz o circuito dele.
 #[derive(Default)]
 struct CircuitoM {
-    /// O quadro escolhido e a TAG dele.
-    quadro: Option<(Handle, String)>,
-    circuito: Option<String>,
-    /// O próximo número livre, oferecido como padrão.
-    sugestao: String,
-    feitos: usize,
     pedindo: Option<Campo>,
 }
 
 impl CircuitoM {
-    fn escolher_circuito(&mut self, s: &mut Session, id: String) -> Result<Step> {
-        if let Some((q, _)) = &self.quadro {
-            ele::circuito::definir_ativo(s.state()?.uid, Some((*q, id.clone())));
-        }
-        self.circuito = Some(id);
-        Ok(Step::Continue)
-    }
-
     fn terminar(s: &mut Session) -> Result<Step> {
-        ele::circuito::definir_ativo(s.state()?.uid, None);
+        ele::circuito::definir_selecao_circuito(s.state()?.uid, None);
         Ok(Step::Done)
-    }
-
-    /// A resposta de uma pergunta de campo. Texto vazio ou Enter não muda nada.
-    fn responder(&mut self, s: &mut Session, campo: Campo, t: &str) -> Result<()> {
-        let (Some((q, _)), Some(id)) = (&self.quadro, &self.circuito) else { return Ok(()) };
-        let (q, id) = (*q, id.clone());
-        let t = t.trim();
-        if t.is_empty() {
-            return Ok(());
-        }
-        let r = match campo {
-            Campo::Descricao => ele::editar::definir_descricao(s.doc_mut()?, q, &id, Some(t)),
-            Campo::Esquema => match ele::nbr5410::Esquema::de_codigo(t) {
-                Some(e) => ele::editar::definir_esquema(s.doc_mut()?, q, &id, Some(e)),
-                None => Err("use F+N, F+N+T, 2F+T ou 3F+N+T".to_string()),
-            },
-            Campo::Tensao => match ele::ponto::numero(t) {
-                Some(v) => ele::editar::definir_tensao_circuito(s.doc_mut()?, q, &id, Some(v)),
-                None => Err("tensão inválida".to_string()),
-            },
-        };
-        if let Err(e) = r {
-            s.echo(e);
-        }
-        Ok(())
     }
 }
 
@@ -1606,87 +1822,94 @@ impl Interactive for CircuitoM {
         s.set_selection(Vec::new());
         preparar(s)?;
         let uid = s.state()?.uid;
-        ele::circuito::definir_ativo(uid, None);
-        // Escolhido antes (eletrica.circuito.alvo, o "adicionar pontos" do quadro de cargas):
-        // vai direto à seleção dos pontos.
-        if let Some((q, c)) = ele::circuito::tomar_alvo(uid)
-            && let Some(p) = quadro_valido(s, q)?
-        {
-            self.quadro = Some((q, p.rotulo()));
-            ele::circuito::definir_ativo(uid, Some((q, c.clone())));
-            self.circuito = Some(c);
-        }
+        ele::circuito::definir_selecao_circuito(uid, None);
+        let a = analise(s)?;
+        // Escolhido antes (eletrica.circuito.alvo, o "adicionar pontos" do quadro de cargas): abre o circuito
+        // para editar, com os pontos dele em destaque.
+        let sel = match ele::circuito::tomar_alvo(uid) {
+            Some((q, c)) if quadro_valido(s, q)?.is_some() => {
+                let mut sel = ele::circuito::carregar_circuito(&a, q, &c);
+                // Um circuito ainda sem nada: o número dado vale.
+                sel.circuito = if sel.circuito.is_empty() { c } else { sel.circuito };
+                sel
+            }
+            _ => ele::circuito::SelecaoCircuito::nova(&a, None, false),
+        };
+        guardar_circuito(s, sel)?;
         Ok(Step::Continue)
     }
-    fn prompt(&self, _s: &Session) -> Prompt {
+    fn prompt(&self, s: &Session) -> Prompt {
         if let Some(c) = self.pedindo {
             return match c {
+                Campo::Numero => Prompt::new("Número do circuito", Accept::TEXT),
                 Campo::Descricao => Prompt::new("Descrição do circuito", Accept::TEXT),
                 Campo::Esquema => Prompt::new("Esquema (F+N, F+N+T, 2F+T, 3F+N+T)", Accept::TEXT),
                 Campo::Tensao => Prompt::new("Tensão do circuito (V)", Accept::TEXT),
             };
         }
-        match (&self.quadro, &self.circuito) {
-            (None, _) => Prompt::new("Selecione o quadro de distribuição", Accept::SELECT),
-            (Some(_), None) => Prompt::new("Número do circuito", Accept::TEXT).default(self.sugestao.clone()),
-            (Some((_, tag)), Some(c)) => {
-                Prompt::new(format!("Selecione os pontos do circuito {c} ({tag})"), Accept::SELECT).kw(&["Descricao", "Esquema", "Tensao"])
+        let sel = s.state().ok().and_then(|st| ele::circuito::selecao_circuito(st.uid)).unwrap_or_default();
+        let tag = sel.quadro.and_then(|q| ele::ponto::ler_ponto(s.doc().ok()?, q)).map(|q| q.rotulo());
+        let kw = ["Numero", "Descricao", "Esquema", "Tensao", "Novo", "Editar"];
+        match tag {
+            None => Prompt::new("Selecione o quadro de distribuição", Accept::SELECT).kw(&kw),
+            Some(_) if sel.editar && !sel.carregado => {
+                Prompt::new("Editar circuito: clique num ponto do circuito, ou escolha o circuito na barra (Esc sai)", Accept::SELECT).kw(&kw)
             }
+            Some(tag) => Prompt::new(
+                format!("Circuito {} ({tag}): clique nos pontos ({} até agora; Enter confirma, Esc sai)", sel.circuito, sel.pontos.len()),
+                Accept::SELECT,
+            )
+            .kw(&kw),
         }
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         if let Some(c) = self.pedindo.take() {
-            if let Input::Text(t) | Input::Keyword(t) = &i {
-                self.responder(s, c, t)?;
+            if let Input::Text(t) | Input::Keyword(t) = &i
+                && !t.trim().is_empty()
+                && let Err(e) = dado_do_circuito(s, c, &json!(t.trim()))
+            {
+                s.echo(e);
             }
             return Ok(Step::Continue);
         }
-        match (&self.quadro, &self.circuito, i) {
-            (_, _, Input::Cancel) => Self::terminar(s),
-            (None, _, Input::Pick(hs)) => {
+        match i {
+            Input::Cancel => Self::terminar(s),
+            Input::Pick(hs) => {
                 s.set_selection(Vec::new());
-                for h in hs {
-                    if let Some(q) = quadro_valido(s, h)? {
-                        self.sugestao = ele::circuito::proximo_circuito(&analise(s)?.pontos, h);
-                        s.echo(format!("Quadro {}.", q.rotulo()));
-                        self.quadro = Some((h, q.rotulo()));
-                        return Ok(Step::Continue);
-                    }
-                }
-                s.echo("Selecione um bloco de quadro (TIPO_PONTO = QUADRO).");
+                clicar_no_circuito(s, &hs)?;
                 Ok(Step::Continue)
             }
-            (None, _, Input::Enter) => Self::terminar(s),
-            (Some(_), None, Input::Text(t) | Input::Keyword(t)) if !t.trim().is_empty() => self.escolher_circuito(s, t.trim().to_string()),
-            (Some(_), None, Input::Enter | Input::Text(_)) => {
-                let id = self.sugestao.clone();
-                self.escolher_circuito(s, id)
-            }
-            (Some((q, _)), Some(c), Input::Pick(hs)) => {
-                let (q, c) = (*q, c.clone());
-                s.set_selection(Vec::new());
-                for h in hs {
-                    if atribuir(s, q, &c, h)? {
-                        self.feitos += 1;
-                    }
+            Input::Enter => {
+                if selecao_do_circuito(s)?.vazia() {
+                    return Self::terminar(s);
+                }
+                if let Err(e) = confirmar_circuito(s) {
+                    s.echo(e.to_string());
                 }
                 Ok(Step::Continue)
             }
-            (Some(_), Some(_), Input::Keyword(k) | Input::Text(k)) => {
-                self.pedindo = match k.trim().to_ascii_lowercase().as_str() {
+            Input::Keyword(k) | Input::Text(k) => {
+                let t = k.trim();
+                self.pedindo = match t.to_lowercase().as_str() {
+                    "numero" | "número" => Some(Campo::Numero),
                     "descricao" | "descrição" => Some(Campo::Descricao),
                     "esquema" => Some(Campo::Esquema),
                     "tensao" | "tensão" => Some(Campo::Tensao),
+                    "novo" | "editar" => {
+                        if let Err(e) = modo_do_circuito(s, t) {
+                            s.echo(e);
+                        }
+                        None
+                    }
+                    // Um número digitado escolhe o circuito.
                     _ => {
-                        s.echo("Opção inválida.");
+                        if let Err(e) = escolher_circuito(s, t) {
+                            s.echo(e);
+                        }
                         None
                     }
                 };
                 Ok(Step::Continue)
-            }
-            (Some(_), Some(c), Input::Enter) => {
-                s.echo(format!("{} ponto(s) no circuito {c}.", self.feitos));
-                Self::terminar(s)
             }
             _ => Ok(Step::Continue),
         }
@@ -1787,10 +2010,27 @@ fn escolher_letra(s: &Session, texto: &str) -> Result<ele::circuito::SelecaoComa
     guardar_selecao(s, sel)
 }
 
-/// Põe (ou tira, num segundo clique) os interruptores e luminárias clicados no comando em montagem.
+/// Põe (ou tira, num segundo clique) os interruptores e luminárias clicados no comando em montagem. No modo
+/// Editar, o primeiro clique num ponto que tem comando carrega o comando dele.
 fn clicar_no_comando(s: &mut Session, hs: &[Handle]) -> Result<()> {
     let mut sel = selecao_atual(s)?;
     let a = analise(s)?;
+    if sel.editar && !sel.manual {
+        let achado = hs.iter().filter_map(|h| a.ponto(*h)).find_map(|p| p.comando.as_deref().and_then(|c| ele::fiacao::letras(c).into_iter().next()));
+        match achado {
+            Some(letra) => {
+                let sel = escolher_letra(s, &letra)?;
+                s.echo(format!(
+                    "Comando {}: {} interruptor(es) e {} luminária(s) para editar.",
+                    sel.comando,
+                    sel.interruptores.len(),
+                    sel.luminarias.len()
+                ));
+            }
+            None => s.echo("Clique num interruptor ou numa luminária que já tem comando, ou escolha o comando na lista."),
+        }
+        return Ok(());
+    }
     for h in hs {
         let Some(p) = a.ponto(*h) else { continue };
         let lista = match p.tipo {
@@ -1833,8 +2073,22 @@ fn confirmar_comando(s: &mut Session) -> Result<ele::editar::ComandoAplicado> {
         s.echo(a.clone());
     }
     ele::circuito::definir_selecao_comando(s.state()?.uid, None);
-    guardar_selecao(s, ele::circuito::SelecaoComando::default())?;
+    // O próximo no mesmo modo: a letra livre seguinte, ou outro comando para editar.
+    guardar_selecao(s, ele::circuito::SelecaoComando { editar: sel.editar, ..Default::default() })?;
     Ok(feito)
+}
+
+/// Troca o modo do ELECOMANDO: `novo` (a próxima letra livre) ou `editar` (clicar num ponto, ou escolher na
+/// lista, traz um comando em uso). Limpa o que estava clicado.
+fn modo_do_comando(s: &Session, modo: &str) -> std::result::Result<(), String> {
+    let editar = match modo.trim().to_lowercase().as_str() {
+        "novo" | "new" => false,
+        "editar" | "edit" => true,
+        _ => return Err(format!("modo \"{modo}\": use novo ou editar")),
+    };
+    ele::circuito::definir_selecao_comando(s.state().map_err(|e| e.to_string())?.uid, None);
+    guardar_selecao(s, ele::circuito::SelecaoComando { editar, ..Default::default() }).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 fn json_da_selecao(s: &Session, sel: &ele::circuito::SelecaoComando) -> Result<Value> {
@@ -1850,6 +2104,10 @@ fn json_da_selecao(s: &Session, sel: &ele::circuito::SelecaoComando) -> Result<V
 
 fn run_comando_selecao(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "eletrica.comando.selecao";
+    if let Some(v) = p.get("modo") {
+        let m = v.as_str().ok_or_else(|| bad(CMD, "`modo` must be novo or editar"))?;
+        modo_do_comando(s, m).map_err(|e| bad(CMD, e))?;
+    }
     if p.get("limpar").and_then(Value::as_bool).unwrap_or(false) {
         let mut sel = selecao_atual(s)?;
         sel.interruptores.clear();
@@ -1948,6 +2206,10 @@ impl Interactive for ComandoM {
             return Prompt::new("Letra do comando", Accept::TEXT);
         }
         let sel = s.state().ok().and_then(|st| ele::circuito::selecao_comando(st.uid)).unwrap_or_default();
+        if sel.editar && !sel.manual {
+            return Prompt::new("Editar comando: clique num interruptor ou numa luminária do comando, ou digite a letra (Esc sai)", Accept::SELECT)
+                .kw(&["Letra", "Novo", "Editar"]);
+        }
         Prompt::new(
             format!(
                 "Comando {}: clique nos interruptores e nas luminárias ({} e {} até agora; Enter confirma, Esc sai)",
@@ -1957,7 +2219,7 @@ impl Interactive for ComandoM {
             ),
             Accept::SELECT,
         )
-        .kw(&["Letra"])
+        .kw(&["Letra", "Novo", "Editar"])
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         if self.pedindo_letra {
@@ -1977,6 +2239,12 @@ impl Interactive for ComandoM {
             Input::Cancel => terminar(s),
             Input::Keyword(k) | Input::Text(k) if k.trim().eq_ignore_ascii_case("letra") => {
                 self.pedindo_letra = true;
+                Ok(Step::Continue)
+            }
+            Input::Keyword(k) | Input::Text(k) if ["novo", "editar"].contains(&k.trim().to_lowercase().as_str()) => {
+                if let Err(e) = modo_do_comando(s, &k) {
+                    s.echo(e);
+                }
                 Ok(Step::Continue)
             }
             Input::Keyword(k) | Input::Text(k) => {

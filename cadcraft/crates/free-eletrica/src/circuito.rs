@@ -147,8 +147,11 @@ pub fn comando_com_letra(atual: &str, letra: &str, teclas: usize) -> String {
 #[serde(rename_all = "camelCase")]
 pub struct SelecaoComando {
     pub comando: String,
-    /// A letra foi escolhida pelo projetista: não acompanha o próximo livre.
+    /// A letra foi escolhida pelo projetista: não acompanha o próximo livre. No modo Editar, um comando em uso
+    /// foi carregado.
     pub manual: bool,
+    /// Modo Editar comando: um clique num interruptor ou luminária que já tem comando traz o comando dele.
+    pub editar: bool,
     #[serde(serialize_with = "hexes")]
     pub interruptores: Vec<Handle>,
     #[serde(serialize_with = "hexes")]
@@ -180,6 +183,152 @@ pub fn selecao_comando(desenho: u64) -> Option<SelecaoComando> {
 /// Troca (ou limpa, com `None`) o comando em montagem no desenho `desenho`.
 pub fn definir_selecao_comando(desenho: u64, selecao: Option<SelecaoComando>) {
     let mut g = SELECAO_COMANDO.lock().unwrap_or_else(|e| e.into_inner());
+    match selecao {
+        Some(s) => {
+            g.insert(desenho, s);
+        }
+        None => {
+            g.remove(&desenho);
+        }
+    }
+}
+
+/// O circuito que o ELECIRCUITO está montando (ou editando) num desenho: o quadro, o número, a descrição, o
+/// esquema e a tensão escolhidos na mini-barra e os pontos clicados, em destaque na planta. Nada vai para o
+/// desenho até confirmar.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SelecaoCircuito {
+    #[serde(serialize_with = "hex_opcional")]
+    pub quadro: Option<Handle>,
+    pub circuito: String,
+    /// O número foi escolhido pelo projetista: não acompanha o próximo livre.
+    pub manual: bool,
+    /// Modo Editar circuito: um clique num ponto que tem circuito traz o circuito dele.
+    pub editar: bool,
+    /// Um circuito que já existia foi carregado para editar.
+    pub carregado: bool,
+    pub descricao: String,
+    #[serde(serialize_with = "esquema_opcional")]
+    pub esquema: Option<crate::nbr5410::Esquema>,
+    pub tensao: Option<f64>,
+    /// Os pontos do circuito como vão ficar, na ordem dos cliques.
+    #[serde(serialize_with = "hexes")]
+    pub pontos: Vec<Handle>,
+    /// Os pontos que o circuito carregado já tinha: os que saírem de `pontos` perdem o circuito.
+    #[serde(serialize_with = "hexes")]
+    pub originais: Vec<Handle>,
+}
+
+impl SelecaoCircuito {
+    /// Um circuito novo no quadro (sem quadro, o único do desenho), no modo dado.
+    pub fn nova(analise: &crate::Analise, quadro: Option<Handle>, editar: bool) -> Self {
+        let quadro = quadro.or_else(|| if let [q] = analise.quadros().as_slice() { Some(q.handle) } else { None });
+        SelecaoCircuito { quadro, editar, ..Default::default() }
+    }
+
+    /// Não há nada a gravar: nenhum ponto, nenhum dado do circuito e nenhum circuito carregado.
+    pub fn vazia(&self) -> bool {
+        !self.carregado && self.pontos.is_empty() && self.descricao.trim().is_empty() && self.esquema.is_none() && self.tensao.is_none()
+    }
+
+    /// Os pontos que entram (não estavam no circuito carregado) e os que saem.
+    pub fn diferenca(&self) -> (Vec<Handle>, Vec<Handle>) {
+        let novos = self.pontos.iter().filter(|h| !self.originais.contains(h)).copied().collect();
+        let fora = self.originais.iter().filter(|h| !self.pontos.contains(h)).copied().collect();
+        (novos, fora)
+    }
+}
+
+fn hex_opcional<S: serde::Serializer>(h: &Option<Handle>, s: S) -> Result<S::Ok, S::Error> {
+    match h {
+        Some(h) => s.serialize_str(&h.hex()),
+        None => s.serialize_none(),
+    }
+}
+
+fn esquema_opcional<S: serde::Serializer>(e: &Option<crate::nbr5410::Esquema>, s: S) -> Result<S::Ok, S::Error> {
+    match e {
+        Some(e) => s.serialize_str(e.codigo()),
+        None => s.serialize_none(),
+    }
+}
+
+/// O circuito `id` existe no quadro: tem pontos ou foi criado (descrito) no quadro de cargas.
+pub fn circuito_existe(analise: &crate::Analise, quadro: Handle, id: &str) -> bool {
+    let id = id.trim();
+    !id.is_empty()
+        && (analise.pontos.iter().any(|p| {
+            p.tipo != TipoPonto::Quadro && p.quadro == Some(quadro) && p.circuito.as_deref().is_some_and(|c| c.trim().eq_ignore_ascii_case(id))
+        }) || analise.ponto(quadro).is_some_and(|q| crate::quadro::descricoes(q).iter().any(|(c, _)| c.eq_ignore_ascii_case(id))))
+}
+
+/// Os circuitos do quadro, com pontos ou só criados, em ordem natural.
+pub fn circuitos_do_quadro(analise: &crate::Analise, quadro: Handle) -> Vec<String> {
+    let mut v: Vec<String> = analise
+        .pontos
+        .iter()
+        .filter(|p| p.tipo != TipoPonto::Quadro && p.quadro == Some(quadro))
+        .filter_map(|p| p.circuito.as_deref().map(|c| c.trim().to_string()))
+        .filter(|c| !c.is_empty())
+        .collect();
+    if let Some(q) = analise.ponto(quadro) {
+        v.extend(crate::quadro::descricoes(q).into_iter().map(|(c, _)| c));
+    }
+    v.sort_by(|a, b| ordem_natural(a, b));
+    v.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+    v
+}
+
+/// Carrega o circuito `id` do quadro para editar: os pontos dele (em destaque), a descrição, o esquema e a
+/// tensão escolhidos.
+pub fn carregar_circuito(analise: &crate::Analise, quadro: Handle, id: &str) -> SelecaoCircuito {
+    let id = id.trim();
+    let pontos: Vec<Handle> = analise
+        .pontos
+        .iter()
+        .filter(|p| {
+            p.tipo != TipoPonto::Quadro && p.quadro == Some(quadro) && p.circuito.as_deref().is_some_and(|c| c.trim().eq_ignore_ascii_case(id))
+        })
+        .map(|p| p.handle)
+        .collect();
+    let q = analise.ponto(quadro);
+    let descricao =
+        q.and_then(|q| crate::quadro::descricoes(q).into_iter().find(|(c, _)| c.eq_ignore_ascii_case(id))).map_or(String::new(), |(_, d)| d);
+    let props = q.and_then(|q| crate::quadro::propriedades(q).into_iter().find(|(c, _)| c.eq_ignore_ascii_case(id))).map(|(_, p)| p);
+    // O número como está nos pontos (ou como foi criado), sem mudar maiúsculas.
+    let nome = analise
+        .pontos
+        .iter()
+        .filter(|p| pontos.contains(&p.handle))
+        .find_map(|p| p.circuito.clone())
+        .map_or_else(|| id.to_string(), |c| c.trim().to_string());
+    SelecaoCircuito {
+        quadro: Some(quadro),
+        circuito: nome,
+        manual: true,
+        editar: true,
+        carregado: true,
+        descricao,
+        esquema: props.as_ref().and_then(|p| p.esquema),
+        tensao: props.as_ref().and_then(|p| p.tensao),
+        originais: pontos.clone(),
+        pontos,
+    }
+}
+
+static SELECAO_CIRCUITO: std::sync::Mutex<std::collections::BTreeMap<u64, SelecaoCircuito>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// O circuito em montagem no desenho `desenho`.
+pub fn selecao_circuito(desenho: u64) -> Option<SelecaoCircuito> {
+    SELECAO_CIRCUITO.lock().unwrap_or_else(|e| e.into_inner()).get(&desenho).cloned()
+}
+
+/// Troca (ou limpa, com `None`) o circuito em montagem no desenho `desenho`. O ativo acompanha.
+pub fn definir_selecao_circuito(desenho: u64, selecao: Option<SelecaoCircuito>) {
+    definir_ativo(desenho, selecao.as_ref().and_then(|s| s.quadro.map(|q| (q, s.circuito.clone()))).filter(|(_, c)| !c.is_empty()));
+    let mut g = SELECAO_CIRCUITO.lock().unwrap_or_else(|e| e.into_inner());
     match selecao {
         Some(s) => {
             g.insert(desenho, s);

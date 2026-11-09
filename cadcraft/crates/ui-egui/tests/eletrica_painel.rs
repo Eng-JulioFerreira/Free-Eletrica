@@ -129,12 +129,12 @@ fn paleta_ferramentas_e_fluxo_completo() {
     assert_eq!(local.size, Some(craft_ui::layout::SplitSize::FixedFirst(290.0)));
 
     let (qd, luz, int) = handles(app);
-    // ELECIRCUITO interativo: quadro, Enter (aceita o próximo número, 3) e a luz.
+    // ELECIRCUITO interativo: o quadro (o número já é o próximo livre, 3), a luz, Enter grava e Enter sai.
     app.start("elecircuito");
     app.session.input(Input::Pick(vec![Handle::parse_hex(&qd).unwrap()])).unwrap();
-    assert!(app.session.prompt_text().contains("Número do circuito"), "{}", app.session.prompt_text());
-    app.session.input(Input::Enter).unwrap();
+    assert!(app.session.prompt_text().contains("Circuito 3"), "{}", app.session.prompt_text());
     app.session.input(Input::Pick(vec![Handle::parse_hex(&luz).unwrap()])).unwrap();
+    app.session.input(Input::Enter).unwrap();
     app.session.input(Input::Enter).unwrap();
     assert!(app.session.running.is_none());
     let a = app.run("eletrica.analisar", json!({})).unwrap();
@@ -189,8 +189,8 @@ fn paleta_ferramentas_e_fluxo_completo() {
         "Dimensionar projeto...",
         "Inserir pontos",
         "Circuitos e Comandos",
-        "Criar circuito",
-        "Comandos e luminárias",
+        "Criar / editar circuito",
+        "Criar / editar comando",
         "Quadros e Dimensionamento",
         "Quadro de cargas...",
         "Lista de pontos...",
@@ -224,7 +224,7 @@ fn paleta_ferramentas_e_fluxo_completo() {
     // A aba Telecom troca as ferramentas.
     h.get_by_label("Telecom").click();
     h.run_steps(3);
-    assert!(h.query_by_label("Criar circuito").is_none());
+    assert!(h.query_by_label("Criar / editar circuito").is_none());
     for f in ["Pontos e Racks", "Inserir ponto de dados", "Inserir rack", "Lista de pontos de dados...", "Infraestrutura", "Catálogo de cabos..."] {
         h.get_by_label(f);
     }
@@ -299,9 +299,12 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.get_by_label("Geral").click();
     h.run_steps(3);
     h.get_by_label("Inicializar projeto no DXF atual");
-    // A sequência das letras de comando: o escopo e o que vem depois do z.
-    h.get_by_label("Escopo da sequência de comandos");
     h.get_by_label("Fonte padrão dos textos e tabelas no desenho:");
+    // A sequência das letras de comando fica na aba Comandos.
+    assert!(h.query_by_label("Escopo da sequência de comandos").is_none());
+    h.get_by_label("Comandos").click();
+    h.run_steps(3);
+    h.get_by_label("Escopo da sequência de comandos");
     h.get_by_label("Padrão após a letra z");
     h.get_by_label("Condutores").click();
     h.run_steps(3);
@@ -495,6 +498,14 @@ fn paleta_ferramentas_e_fluxo_completo() {
     }
     // Etapa 1: o diagnóstico do quadro.
     h.get_by_label("Diagnóstico do quadro QD-01");
+    // Cada aviso tem o "Ir para o ponto", que centraliza o desenho nele e o destaca.
+    let botoes = h.query_all_by_label("🔍 Ir para o ponto").count();
+    let avisos = h.state_mut().run("eletrica.diagnostico", json!({})).unwrap()["itens"].as_array().map_or(0, Vec::len);
+    assert_eq!(botoes > 0, avisos > 0, "os avisos têm o botão ({botoes} botões, {avisos} avisos)");
+    if botoes > 0 {
+        h.query_all_by_label("🔍 Ir para o ponto").next().unwrap().click();
+        h.run_steps(3);
+    }
     if let Ok(saida) = std::env::var("FREE_ELETRICA_PNG_DIAGNOSTICO") {
         h.render().unwrap().save(saida).unwrap();
     }
@@ -668,6 +679,10 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.run_steps(3);
     h.get_by_label("Cabos por isolação, seção e cor, com a folga do projeto");
     h.get_by_label("Folga de Cabos (%)");
+    // As duas saídas lado a lado: a tabela na prancha e a planilha do Excel (sem diálogo no teste, nada acontece).
+    h.get_by_label("Inserir Tabela na Prancha (DXF)");
+    h.get_by_label("Exportar para Excel (.csv)").click();
+    h.run_steps(3);
     assert!(h.query_all_by_label("Eletrodutos").count() >= 2, "a seção da paleta e o título na lista");
     h.get_by_label("Disjuntores");
     for cabo in ["mm² - Azul claro (Neutro)", "mm² - Verde (Terra / PE)"] {
@@ -772,9 +787,11 @@ fn paleta_ferramentas_e_fluxo_completo() {
         h.state_mut().run("eletrica.blocos", json!({})).unwrap().as_array().unwrap().iter().any(|b| b["nome"] == n)
     };
     assert!(tem(&mut h, "CX-PASSAGEM") && tem(&mut h, "CX-OCT"));
-    // Duas caixas de fábrica, em ordem de nome: a octogonal de teto e a de passagem.
-    assert_eq!(h.query_all_by_label("Excluir").count(), 2);
-    h.query_all_by_label("Excluir").last().unwrap().click();
+    // Quatro caixas de fábrica, em ordem de nome: a octogonal de teto, a de passagem e as prumadas (o eletroduto
+    // que desce e o que sobe).
+    assert!(tem(&mut h, "ELE-SOBE") && tem(&mut h, "ELE-DESCE"));
+    assert_eq!(h.query_all_by_label("Excluir").count(), 4);
+    h.query_all_by_label("Excluir").nth(1).unwrap().click();
     h.run_steps(3);
     h.get_by_label("Excluir?").click();
     h.run_steps(3);
@@ -799,8 +816,8 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.run_steps(3);
     assert!(h.query_by_label("Com linha de chamada").is_none(), "a mini-barra some com o comando");
 
-    // Comandos e luminárias: a mini-barra com a letra livre, o que foi clicado e as ações.
-    h.get_by_label("Comandos e luminárias").click();
+    // Criar / editar comando: a mini-barra com a letra livre, o que foi clicado e as ações.
+    h.get_by_label("Criar / editar comando").click();
     h.run_steps(3);
     assert_eq!(h.state().session.running.as_ref().map(|r| r.id.as_str()), Some("elecomando"));
     h.get_by_label("Comando atual:");
@@ -822,6 +839,15 @@ fn paleta_ferramentas_e_fluxo_completo() {
     if let Ok(saida) = std::env::var("FREE_ELETRICA_PNG_COMANDO") {
         h.render().unwrap().save(saida).unwrap();
     }
+    // Editar comando existente: a barra pede o comando (na lista ou por clique) e volta ao novo.
+    h.get_by_label("Editar comando existente").click();
+    h.run_steps(3);
+    assert!(free_eletrica::circuito::selecao_comando(uid).unwrap().editar);
+    h.get_by_label("ou clique num interruptor ou numa luminária que já tem comando.");
+    assert!(h.query_by_label("Comando atual:").is_none());
+    h.get_by_label("Novo comando").click();
+    h.run_steps(3);
+    h.get_by_label("Comando atual:");
     h.get_by_label("X Sair (ESC)").click();
     h.run_steps(3);
     assert!(h.state().session.running.is_none(), "Sair encerra o comando");
@@ -923,21 +949,42 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.state_mut().session.input(Input::Enter).unwrap();
     h.run_steps(3);
 
-    h.get_by_label("Criar circuito").click();
+    h.get_by_label("Criar / editar circuito").click();
     h.run_steps(3);
-    h.get_by_label("Selecione o quadro e informe o número do circuito.");
+    // A mini-barra: novo ou editar, o quadro (o único já vem), o número, a descrição, o esquema e a tensão.
+    for rotulo in ["Criar novo circuito", "Editar circuito", "Quadro", "Número", "Descrição", "Esquema", "Tensão", "Limpar seleção", "X Sair (ESC)"]
+    {
+        h.get_by_label(rotulo);
+    }
     let q = Handle::parse_hex(&qd).unwrap();
     let app = h.state_mut();
     app.session.input(Input::Pick(vec![q])).unwrap();
     app.session.input(Input::Text("9".into())).unwrap();
+    h.state_mut().run("eletrica.circuito.selecao", json!({ "esquema": "F+N", "adicionar": [luz] })).unwrap();
     h.run_steps(3);
-    h.get_by_label("Circuito 9 · QD-01");
-    h.state_mut().run("eletrica.circuito.definir", json!({ "circuito": "9", "esquema": "F+N" })).unwrap();
-    h.run_steps(3);
-    h.get_by_label("Tensão");
+    h.get_by_label("Pontos: 1");
+    if let Ok(saida) = std::env::var("FREE_ELETRICA_PNG_CIRCUITO") {
+        h.render().unwrap().save(saida).unwrap();
+    }
     assert!(h.state().session.running.is_some(), "a edição não interrompe o comando");
-    h.state_mut().session.input(Input::Enter).unwrap();
+    h.get_by_label("Confirmar circuito (Enter)").click();
     h.run_steps(3);
+    let uid = h.state().session.state().unwrap().uid;
+    assert_eq!(free_eletrica::circuito::selecao_circuito(uid).unwrap().circuito, "10", "gravado: o próximo já vem");
+    // Editar: a barra pede o circuito; escolhido, os pontos dele vêm em destaque.
+    h.get_by_label("Editar circuito").click();
+    h.run_steps(3);
+    h.get_by_label("ou clique num ponto do circuito na planta.");
+    h.state_mut().run("eletrica.circuito.selecao", json!({ "circuito": "9" })).unwrap();
+    h.run_steps(3);
+    h.get_by_label("Pontos: 1 (+0 / -0)");
+    h.get_by_label("Salvar / Confirmar (Enter)");
+    if let Ok(saida) = std::env::var("FREE_ELETRICA_PNG_CIRCUITO_EDITAR") {
+        h.render().unwrap().save(saida).unwrap();
+    }
+    h.get_by_label("X Sair (ESC)").click();
+    h.run_steps(3);
+    assert!(h.state().session.running.is_none());
 
     // Inspeção visual: liga e desliga; ELECONFERIR liga e abre a lista.
     h.get_by_label("Inspecionar projeto").click();

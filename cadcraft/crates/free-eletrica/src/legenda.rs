@@ -4,7 +4,8 @@
 //! uma por disciplina: `LEGENDA_SIMBOLOS_ELETRICA` (os pontos elétricos e as caixas) e
 //! `LEGENDA_SIMBOLOS_TELECOM`. `LEGENDA_SIMBOLOS`, das versões anteriores, tem todos. O nome vem do atributo
 //! `LEGENDA` do ponto ou da família. A da elétrica vem com uma segunda tabela ao lado, a simbologia do diagrama
-//! unifilar (`LEGENDA_SIMBOLOGIA_UNIFILAR`). Regenerar troca o conteúdo dos blocos e mantém as inserções.
+//! unifilar (`LEGENDA_SIMBOLOGIA_UNIFILAR`), e uma terceira embaixo, a da fiação e dos eletrodutos
+//! (`LEGENDA_FIACAO_ELETRODUTOS`). Regenerar troca o conteúdo dos blocos e mantém as inserções.
 
 use std::sync::Arc;
 
@@ -175,6 +176,127 @@ fn gravar_simbologia(doc: &mut Drawing, m: f64) {
     doc.blocks.insert(BLOCO_UNIFILAR.to_string(), Arc::new(b));
 }
 
+/// O bloco da simbologia de fiação e eletrodutos: as marcas dos condutores na tag, os traços do eletroduto
+/// por caminhamento e os símbolos de subida e descida. A Legenda de símbolos da aba Elétrica o põe embaixo da
+/// legenda da planta.
+pub const BLOCO_FIACAO: &str = "LEGENDA_FIACAO_ELETRODUTOS";
+pub const TITULO_FIACAO: &str = "SIMBOLOGIA DE FIAÇÃO E ELETRODUTOS";
+
+/// A inserção da simbologia de fiação e eletrodutos.
+pub fn simbologia_fiacao(doc: &Drawing) -> Option<Handle> {
+    doc.model.iter().find(|e| matches!(&e.kind, EntityKind::Insert(i) if i.block == BLOCO_FIACAO)).map(|e| e.handle)
+}
+
+/// Um traço do eletroduto na legenda: o caminhamento e o padrão dele (comprimentos dos traços e espaços, m).
+/// Os traços são desenhados um a um, sem depender do tipo de linha nem da escala dele.
+const PADROES_ELETRODUTO: [(&str, &[f64]); 3] = [
+    ("Eletroduto embutido no teto ou na laje (linha contínua)", &[]),
+    ("Eletroduto embutido na parede (tracejado)", &[0.045, 0.025]),
+    ("Eletroduto embutido no piso (traço e ponto)", &[0.06, 0.02, 0.005, 0.02]),
+];
+
+/// Os traços de `x0` a `x1` na altura `y`, com o padrão (vazio: contínuo), em metros.
+fn tracos(x0: f64, x1: f64, y: f64, padrao: &[f64]) -> Vec<([f64; 2], [f64; 2])> {
+    if padrao.is_empty() || padrao.iter().any(|v| !(v.is_finite() && *v > 0.0)) {
+        return vec![([x0, y], [x1, y])];
+    }
+    let mut v = Vec::new();
+    let mut x = x0;
+    // Traço, espaço, traço...: os de índice par são desenhados.
+    for (i, passo) in padrao.iter().cycle().enumerate() {
+        if x >= x1 - 1e-12 {
+            break;
+        }
+        let fim = (x + passo).min(x1);
+        if i.is_multiple_of(2) {
+            v.push(([x, y], [fim, y]));
+        }
+        x = fim;
+    }
+    v
+}
+
+/// As linhas da simbologia de fiação e eletrodutos: (nome, desenho no centro da célula do símbolo, em m).
+fn linhas_da_fiacao() -> Vec<(&'static str, Simbolo)> {
+    use crate::fiacao::TipoCondutor as T;
+    let mut v: Vec<(&'static str, Simbolo)> = vec![
+        ("Condutor fase (traço inteiro)", Simbolo::Marca(T::Fase)),
+        ("Condutor neutro (traço com a bandeira no topo)", Simbolo::Marca(T::Neutro)),
+        ("Condutor de proteção, terra ou PE (traço em T)", Simbolo::Marca(T::Protecao)),
+        ("Condutor de retorno (meio traço, acima)", Simbolo::Marca(T::Retorno)),
+    ];
+    v.extend(PADROES_ELETRODUTO.iter().map(|(n, p)| (*n, Simbolo::Eletroduto(p))));
+    v.push(("Eletroduto que sobe", Simbolo::Prumada(true)));
+    v.push(("Eletroduto que desce", Simbolo::Prumada(false)));
+    v
+}
+
+enum Simbolo {
+    /// A marca do condutor sobre um trecho de eletroduto.
+    Marca(crate::fiacao::TipoCondutor),
+    /// O traço do eletroduto, com o padrão do caminhamento.
+    Eletroduto(&'static [f64]),
+    /// O eletroduto que sobe (`true`) ou desce.
+    Prumada(bool),
+}
+
+/// O conteúdo do bloco da simbologia de fiação e eletrodutos e a largura dela (m).
+pub fn pecas_da_fiacao(m: f64) -> (Vec<EntityKind>, f64) {
+    let u = |v: f64| v / m;
+    let lista = linhas_da_fiacao();
+    let maior = lista.iter().map(|(n, _)| n.chars().count()).max().unwrap_or(0);
+    let largura = (COLUNA_SIMBOLO + maior as f64 * ALTURA * crate::tabela::LARGURA_CARACTERE + 2.0 * ALTURA)
+        .max(TITULO_FIACAO.chars().count() as f64 * crate::tabela::ALTURA_TITULO * crate::tabela::LARGURA_CARACTERE + ALTURA);
+    let fundo = -TITULO - LINHA * lista.len() as f64;
+    let mut p = vec![texto(TITULO_FIACAO, [u(largura / 2.0), u(-TITULO / 2.0)], u(crate::tabela::ALTURA_TITULO), HAlign::Center)];
+    for (a, b) in [([0.0, 0.0], [largura, 0.0]), ([largura, 0.0], [largura, fundo]), ([largura, fundo], [0.0, fundo]), ([0.0, fundo], [0.0, 0.0])] {
+        p.push(linha([u(a[0]), u(a[1])], [u(b[0]), u(b[1])]));
+    }
+    let (x0, x1) = (0.06, COLUNA_SIMBOLO - 0.06);
+    for (i, (nome, simbolo)) in lista.iter().enumerate() {
+        let y = -TITULO - LINHA * i as f64;
+        let meio = y - LINHA / 2.0;
+        p.push(linha([0.0, u(y)], [u(largura), u(y)]));
+        p.push(linha([u(COLUNA_SIMBOLO), u(y)], [u(COLUNA_SIMBOLO), u(y - LINHA)]));
+        match simbolo {
+            Simbolo::Marca(t) => {
+                p.push(linha([u(x0), u(meio)], [u(x1), u(meio)]));
+                p.push(EntityKind::Insert(Insert {
+                    block: t.bloco().to_string(),
+                    insert: Vec3::new(u(COLUNA_SIMBOLO / 2.0), u(meio), 0.0),
+                    scale: Vec3::new(1.0, 1.0, 1.0),
+                    rotation: 0.0,
+                    attribs: Vec::new(),
+                    cols: 1,
+                    rows: 1,
+                    col_spacing: 0.0,
+                    row_spacing: 0.0,
+                }));
+            }
+            Simbolo::Eletroduto(padrao) => {
+                p.extend(tracos(x0, x1, meio, padrao).into_iter().map(|(a, b)| linha([u(a[0]), u(a[1])], [u(b[0]), u(b[1])])));
+            }
+            Simbolo::Prumada(sobe) => {
+                // O eletroduto chega pela esquerda até o círculo.
+                let cx = COLUNA_SIMBOLO / 2.0 - 0.04;
+                p.push(linha([u(x0), u(meio)], [u(cx - 0.05), u(meio)]));
+                p.extend(crate::biblioteca::desenho_prumada(*sobe, [cx, meio], m));
+            }
+        }
+        p.push(texto(nome, [u(COLUNA_SIMBOLO + ALTURA), u(meio)], u(ALTURA), HAlign::Left));
+    }
+    (p, largura)
+}
+
+fn gravar_fiacao(doc: &mut Drawing, m: f64) {
+    crate::fiacao::garantir_blocos(doc, m);
+    let mut b = Block::new(BLOCO_FIACAO);
+    for k in pecas_da_fiacao(m).0 {
+        b.entities.push(Entity::new(doc.new_handle(), k));
+    }
+    doc.blocks.insert(BLOCO_FIACAO.to_string(), Arc::new(b));
+}
+
 /// Põe a inserção `nome` em `pos`: move a que existe (`existente`) ou cria uma.
 fn inserir_bloco(doc: &mut Drawing, nome: &str, existente: Option<Handle>, pos: [f64; 2]) -> Result<Handle, String> {
     if let Some(h) = existente
@@ -244,7 +366,7 @@ pub fn inserir(doc: &mut Drawing, analise: &Analise, pos: [f64; 2], metros: f64,
         return Err("posição inválida".into());
     }
     let m = if metros > 0.0 { metros } else { 1.0 };
-    crate::tabela::garantir_estilo(doc, crate::setup::atual().fonte_textos);
+    crate::tabela::garantir_estilo(doc, &crate::setup::atual().fonte_textos);
     let largura = gravar_bloco(doc, analise, m, disciplina);
     let existente = inserida_de(doc, disciplina);
     let h = inserir_bloco(doc, bloco(disciplina), existente, pos)?;
@@ -253,6 +375,12 @@ pub fn inserir(doc: &mut Drawing, analise: &Analise, pos: [f64; 2], metros: f64,
         let ao_lado = [pos[0] + (largura + ENTRE_TABELAS) / m, pos[1]];
         let existente = simbologia_unifilar(doc);
         inserir_bloco(doc, BLOCO_UNIFILAR, existente, ao_lado)?;
+        // A fiação e os eletrodutos, embaixo da legenda da planta.
+        gravar_fiacao(doc, m);
+        let altura = TITULO + LINHA * linhas(analise, disciplina).len() as f64;
+        let embaixo = [pos[0], pos[1] - (altura + ENTRE_TABELAS) / m];
+        let existente = simbologia_fiacao(doc);
+        inserir_bloco(doc, BLOCO_FIACAO, existente, embaixo)?;
     }
     Ok(h)
 }
@@ -269,5 +397,9 @@ pub fn regenerar(doc: &mut Drawing, analise: &Analise, metros: f64) -> usize {
     if simbologia {
         gravar_simbologia(doc, m);
     }
-    disciplinas.len() + usize::from(simbologia)
+    let fiacao = simbologia_fiacao(doc).is_some();
+    if fiacao {
+        gravar_fiacao(doc, m);
+    }
+    disciplinas.len() + usize::from(simbologia) + usize::from(fiacao)
 }

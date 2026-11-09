@@ -214,47 +214,131 @@ impl CorProtecao {
 }
 
 /// A fonte dos textos que o Free Elétrica põe no desenho (tabelas, unifilar, vista frontal, legendas, tags e
-/// atributos dos blocos de fábrica), no estilo de texto `FREE_ELETRICA`. Só o nome do arquivo vai para o DXF:
-/// a fonte é a instalada no computador (no Windows, as TrueType vêm com o sistema; as SHX, com o AutoCAD).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum FonteTexto {
-    #[default]
-    Arial,
-    Isocp,
-    Tahoma,
-    Calibri,
-    Simplex,
+/// atributos dos blocos de fábrica), no estilo de texto `FREE_ELETRICA`: o nome do arquivo da fonte. Só o nome
+/// vai para o DXF: a fonte é a instalada no computador (no Windows, as TrueType vêm com o sistema; as SHX, com
+/// o AutoCAD). Qualquer fonte instalada serve ([`fontes_instaladas`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct FonteTexto(String);
+
+impl Default for FonteTexto {
+    fn default() -> Self {
+        Self::arial()
+    }
+}
+
+/// Os valores das versões anteriores (`arial`, `isocp`...) continuam valendo. `simplex` saiu das opções: é
+/// vetorial e sem os acentos, e volta como Arial.
+impl<'de> Deserialize<'de> for FonteTexto {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let t = String::deserialize(d)?;
+        Ok(match t.trim().to_ascii_lowercase().as_str() {
+            "" | "arial" | "simplex" | "simplex.shx" => Self::arial(),
+            "isocp" => Self::de_arquivo("isocp.shx"),
+            "tahoma" => Self::de_arquivo("tahoma.ttf"),
+            "calibri" => Self::de_arquivo("calibri.ttf"),
+            _ => Self::de_arquivo(&t),
+        })
+    }
 }
 
 impl FonteTexto {
-    pub const TODAS: [FonteTexto; 5] = [Self::Arial, Self::Isocp, Self::Tahoma, Self::Calibri, Self::Simplex];
+    /// As fontes oferecidas primeiro: (nome, arquivo). Todas têm os acentos e o ç.
+    pub const PREDEFINIDAS: [(&'static str, &'static str); 4] =
+        [("Arial (padrão)", "arial.ttf"), ("Calibri", "calibri.ttf"), ("Tahoma", "tahoma.ttf"), ("ISOCP", "isocp.shx")];
 
-    pub fn nome(self) -> &'static str {
-        match self {
-            Self::Arial => "Arial (padrão)",
-            Self::Isocp => "ISOCP",
-            Self::Tahoma => "Tahoma",
-            Self::Calibri => "Calibri",
-            Self::Simplex => "Simplex",
+    pub fn arial() -> Self {
+        Self("arial.ttf".into())
+    }
+
+    /// A fonte de um arquivo (`tahoma.ttf`); sem a extensão, é TrueType. Vazio: Arial.
+    pub fn de_arquivo(arquivo: &str) -> Self {
+        let a = arquivo.trim();
+        if a.is_empty() {
+            return Self::arial();
         }
+        let tem_extensao = std::path::Path::new(a).extension().is_some();
+        Self(if tem_extensao { a.to_string() } else { format!("{a}.ttf") })
+    }
+
+    /// O nome para a lista: o das predefinidas, ou o arquivo sem a extensão.
+    pub fn nome(&self) -> String {
+        Self::PREDEFINIDAS.iter().find(|(_, a)| a.eq_ignore_ascii_case(&self.0)).map_or_else(|| nome_da_fonte(&self.0), |(n, _)| n.to_string())
     }
 
     /// O arquivo da fonte no estilo de texto do DXF.
-    pub fn arquivo(self) -> &'static str {
-        match self {
-            Self::Arial => "arial.ttf",
-            Self::Isocp => "isocp.shx",
-            Self::Tahoma => "tahoma.ttf",
-            Self::Calibri => "calibri.ttf",
-            Self::Simplex => "simplex.shx",
-        }
+    pub fn arquivo(&self) -> &str {
+        &self.0
     }
 
-    /// TrueType: tem os acentos e o ç em qualquer programa que a encontre.
-    pub fn truetype(self) -> bool {
-        self.arquivo().ends_with(".ttf")
+    /// TrueType ou OpenType: tem os acentos e o ç em qualquer programa que a encontre.
+    pub fn truetype(&self) -> bool {
+        let e = self.0.to_ascii_lowercase();
+        [".ttf", ".otf", ".ttc", ".otc"].iter().any(|x| e.ends_with(x))
     }
+}
+
+/// O nome de uma fonte pelo arquivo: `segoeui.ttf` → `segoeui`.
+pub fn nome_da_fonte(arquivo: &str) -> String {
+    std::path::Path::new(arquivo).file_stem().map_or_else(|| arquivo.to_string(), |s| s.to_string_lossy().to_string())
+}
+
+/// As fontes TrueType e OpenType instaladas no computador (os arquivos, em ordem e sem repetir), nas pastas
+/// em que o CADCraft as procura. Lida uma vez por execução.
+pub fn fontes_instaladas() -> Vec<String> {
+    static FONTES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    FONTES.get_or_init(|| fontes_nas_pastas(&pastas_de_fontes())).clone()
+}
+
+fn pastas_de_fontes() -> Vec<std::path::PathBuf> {
+    use std::path::PathBuf;
+    let mut v: Vec<PathBuf> = Vec::new();
+    if cfg!(windows) {
+        v.push("C:\\Windows\\Fonts".into());
+        if let Some(l) = std::env::var_os("LOCALAPPDATA") {
+            v.push(PathBuf::from(l).join("Microsoft\\Windows\\Fonts"));
+        }
+    } else if cfg!(target_os = "macos") {
+        v.extend(["/System/Library/Fonts", "/System/Library/Fonts/Supplemental", "/Library/Fonts"].map(PathBuf::from));
+        if let Some(h) = std::env::var_os("HOME") {
+            v.push(PathBuf::from(h).join("Library/Fonts"));
+        }
+    } else {
+        v.extend(["/usr/share/fonts", "/usr/local/share/fonts"].map(PathBuf::from));
+        if let Some(h) = std::env::var_os("HOME") {
+            v.push(PathBuf::from(&h).join(".fonts"));
+            v.push(PathBuf::from(h).join(".local/share/fonts"));
+        }
+    }
+    v
+}
+
+/// Os arquivos de fonte (`.ttf`, `.otf`, `.ttc`, `.otc`) nas pastas e nas subpastas delas, com o nome em
+/// minúsculas, em ordem e sem repetir. Uma pasta que não existe não conta.
+pub fn fontes_nas_pastas(pastas: &[std::path::PathBuf]) -> Vec<String> {
+    let mut achadas = std::collections::BTreeSet::new();
+    let mut pilha: Vec<std::path::PathBuf> = pastas.to_vec();
+    let mut vistos = 0usize;
+    while let Some(d) = pilha.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        for e in rd.flatten() {
+            vistos += 1;
+            if vistos > 20_000 {
+                return achadas.into_iter().collect();
+            }
+            let p = e.path();
+            if p.is_dir() {
+                pilha.push(p);
+                continue;
+            }
+            let ext = p.extension().map(|x| x.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+            if matches!(ext.as_str(), "ttf" | "otf" | "ttc" | "otc")
+                && let Some(n) = p.file_name()
+            {
+                achadas.insert(n.to_string_lossy().to_ascii_lowercase());
+            }
+        }
+    }
+    achadas.into_iter().collect()
 }
 
 /// Onde a sequência de comandos (`a`, `b`, `c`...) não repete.
@@ -701,7 +785,7 @@ impl Setup {
             cor_protecao: CorProtecao::Verde,
             escopo_comandos: EscopoComandos::Global,
             sufixo_comandos: SufixoComandos::LetrasRepetidas,
-            fonte_textos: FonteTexto::Arial,
+            fonte_textos: FonteTexto::arial(),
             unidade: Unidade::default(),
             camadas_eletroduto: "*ELETRODUTO*".into(),
             camadas_piso: "*PISO*".into(),

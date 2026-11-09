@@ -307,7 +307,7 @@ fn textos_gerados_usam_o_estilo_com_a_fonte_das_configuracoes() {
     let mut d = planta();
     let q = quadro(&d);
     let setup = Setup::default();
-    assert_eq!(setup.fonte_textos, setup::FonteTexto::Arial, "Arial é o padrão: tem os acentos e o ç");
+    assert_eq!(setup.fonte_textos, setup::FonteTexto::arial(), "Arial é o padrão: tem os acentos e o ç");
     let an = analisar(&d);
     tabela::inserir(&mut d, &an, &setup, q, [0.0, 20.0]).unwrap();
     assert_eq!(estilo(&d).as_deref(), Some("arial.ttf"));
@@ -322,17 +322,46 @@ fn textos_gerados_usam_o_estilo_com_a_fonte_das_configuracoes() {
     }
     assert!(textos_do_bloco(&d, &format!("{}{}", tabela::PREFIXO, q.hex())).iter().any(|t| t.0.contains("POTÊNCIA")));
     // Outra fonte nas configurações: Atualizar tags e tabelas troca a do estilo, e tudo muda junto.
-    for (fonte, arquivo) in [
-        (setup::FonteTexto::Isocp, "isocp.shx"),
-        (setup::FonteTexto::Tahoma, "tahoma.ttf"),
-        (setup::FonteTexto::Calibri, "calibri.ttf"),
-        (setup::FonteTexto::Simplex, "simplex.shx"),
-    ] {
-        fiacao::regenerar(&mut d, &Setup { fonte_textos: fonte, ..Setup::default() }, None).unwrap();
+    for arquivo in ["isocp.shx", "tahoma.ttf", "calibri.ttf", "segoeui.ttf"] {
+        fiacao::regenerar(&mut d, &Setup { fonte_textos: setup::FonteTexto::de_arquivo(arquivo), ..Setup::default() }, None).unwrap();
         assert_eq!(estilo(&d).as_deref(), Some(arquivo));
         assert_eq!(d.text_styles.iter().filter(|s| s.name == tabela::ESTILO_TEXTO).count(), 1, "um estilo só");
     }
-    assert!(setup::FonteTexto::Arial.truetype() && !setup::FonteTexto::Simplex.truetype());
+    assert!(setup::FonteTexto::arial().truetype() && !setup::FonteTexto::de_arquivo("isocp.shx").truetype());
+    // A fonte vetorial sem acentos saiu das opções.
+    assert!(setup::FonteTexto::PREDEFINIDAS.iter().all(|(_, a)| !a.contains("simplex")));
+}
+
+#[test]
+fn fonte_dos_textos_aceita_os_valores_antigos_e_qualquer_arquivo() {
+    let ler = |v: &str| serde_json::from_value::<setup::FonteTexto>(serde_json::json!(v)).unwrap();
+    assert_eq!(ler("arial").arquivo(), "arial.ttf");
+    assert_eq!(ler("isocp").arquivo(), "isocp.shx");
+    assert_eq!(ler("tahoma").arquivo(), "tahoma.ttf");
+    assert_eq!(ler("calibri").arquivo(), "calibri.ttf");
+    assert_eq!(ler("simplex").arquivo(), "arial.ttf", "a vetorial sem acentos volta como Arial");
+    assert_eq!(ler("verdana.ttf").arquivo(), "verdana.ttf");
+    assert_eq!(serde_json::to_value(ler("verdana.ttf")).unwrap(), serde_json::json!("verdana.ttf"), "grava o arquivo");
+    assert_eq!(setup::FonteTexto::de_arquivo("Segoe UI").arquivo(), "Segoe UI.ttf");
+    assert_eq!(setup::FonteTexto::de_arquivo("  ").arquivo(), "arial.ttf");
+    assert_eq!(setup::FonteTexto::de_arquivo("verdana.ttf").nome(), "verdana");
+    assert_eq!(setup::FonteTexto::arial().nome(), "Arial (padrão)");
+    // O diâmetro das tags é o Ø (U+00D8), que toda fonte tem; nunca o %%c, que vira ⌀ (U+2300).
+    assert_eq!(u32::from(fiacao::DIAMETRO), 0xD8);
+    assert_eq!(fiacao::texto_diametro(Some(20.0)), "\u{D8}20");
+}
+
+#[test]
+fn fontes_instaladas_lidas_das_pastas_e_subpastas() {
+    let raiz = std::env::temp_dir().join(format!("free-eletrica-fontes-{}", std::process::id()));
+    let sub = raiz.join("truetype");
+    std::fs::create_dir_all(&sub).unwrap();
+    for (pasta, nome) in [(&raiz, "Arial.TTF"), (&sub, "dejavu.ttf"), (&sub, "noto.otf"), (&raiz, "leia.txt"), (&sub, "arial.ttf")] {
+        std::fs::write(pasta.join(nome), b"x").unwrap();
+    }
+    let achadas = setup::fontes_nas_pastas(&[raiz.clone(), raiz.join("nao-existe")]);
+    let _ = std::fs::remove_dir_all(&raiz);
+    assert_eq!(achadas, ["arial.ttf", "dejavu.ttf", "noto.otf"]);
 }
 
 #[test]
@@ -1636,6 +1665,164 @@ fn corrente_corrigida_e_alimentador() {
 }
 
 #[test]
+fn circuito_montado_na_selecao_so_grava_ao_confirmar() {
+    let mut d = metros();
+    let q = qd(&mut d, 0.0, 0.0);
+    let a = tug(&mut d, 2.0, 0.0, "");
+    let b = tug(&mut d, 4.0, 0.0, "");
+    let c = tug(&mut d, 6.0, 0.0, "");
+    let an = analisar(&d);
+    // Novo: o único quadro do desenho já vem escolhido; nada a gravar sem pontos nem dados.
+    let mut sel = circuito::SelecaoCircuito::nova(&an, None, false);
+    assert_eq!(sel.quadro, Some(q));
+    assert!(sel.vazia() && editar::aplicar_circuito(&mut d, &sel).is_err());
+    sel.circuito = "5".into();
+    sel.descricao = "TUGs Sala".into();
+    sel.esquema = Some(nbr5410::Esquema::Fnt);
+    sel.pontos = vec![a, b];
+    let r = editar::aplicar_circuito(&mut d, &sel).unwrap();
+    assert_eq!((r.circuito.as_str(), r.adicionados, r.retirados), ("5", 2, 0));
+    let an = analisar(&d);
+    assert!(circuito::circuito_existe(&an, q, "5") && !circuito::circuito_existe(&an, q, "6"));
+    assert_eq!(circuito::circuitos_do_quadro(&an, q), ["5"]);
+    // Editar: carrega os pontos, a descrição e o esquema; tira um, põe outro e grava.
+    let mut ed = circuito::carregar_circuito(&an, q, "5");
+    assert_eq!((ed.pontos.clone(), ed.descricao.as_str(), ed.esquema), (vec![a, b], "TUGs Sala", Some(nbr5410::Esquema::Fnt)));
+    assert!(ed.carregado && ed.editar && !ed.vazia());
+    ed.pontos.retain(|h| *h != a);
+    ed.pontos.push(c);
+    assert_eq!(ed.diferenca(), (vec![c], vec![a]));
+    let r = editar::aplicar_circuito(&mut d, &ed).unwrap();
+    assert_eq!((r.adicionados, r.retirados, r.pontos), (1, 1, 2));
+    let circuito_de = |d: &Drawing, h: Handle| ponto::ler_ponto(d, h).unwrap().circuito;
+    assert_eq!((circuito_de(&d, a), circuito_de(&d, b).as_deref(), circuito_de(&d, c).as_deref()), (None, Some("5"), Some("5")));
+    // Um quadro na seleção, ou uma tensão inválida, é recusado antes de gravar.
+    let mut ruim = ed.clone();
+    ruim.pontos.push(q);
+    assert!(editar::aplicar_circuito(&mut d, &ruim).is_err());
+    ruim.pontos.pop();
+    ruim.tensao = Some(f64::NAN);
+    assert!(editar::aplicar_circuito(&mut d, &ruim).is_err());
+}
+
+#[test]
+fn planilha_dos_materiais_abre_no_excel_em_portugues() {
+    let setup = Setup::default();
+    let mut m = materiais::Materiais::default();
+    m.cabos.push(materiais::ItemCabo {
+        secao: 2.5,
+        tipo: nbr5410::TipoCabo::default(),
+        nome: "Cabo flexível PVC".into(),
+        funcao: materiais::FuncaoCondutor::Neutro,
+        cor: materiais::FuncaoCondutor::Neutro.cor(&setup),
+        metros: 123.4,
+        rolos: 2,
+        descricao: String::new(),
+    });
+    m.eletrodutos.push(materiais::ItemEletroduto { tipo: rota::TipoEletroduto::default(), diametro: Some(20.0), metros: 12.26 });
+    m.disjuntores.push(materiais::ItemContado { nome: "Disjuntor 1P 16 A; curva C \"DIN\"".into(), quantidade: 3 });
+    let csv = materiais::planilha_csv(&m);
+    // O BOM do UTF-8, o cabeçalho com as seis colunas e uma linha por item, em CRLF.
+    assert!(csv.starts_with('\u{FEFF}'));
+    let linhas: Vec<&str> = csv.trim_start_matches('\u{FEFF}').split("\r\n").filter(|l| !l.is_empty()).collect();
+    assert_eq!(linhas[0], "Categoria;Item / Descrição;Isolação / Especificação;Cor / Função;Unidade;Quantidade");
+    assert_eq!(linhas.len(), 4, "{linhas:?}");
+    assert_eq!(linhas[1], "Cabos;Cabo flexível PVC #2,5 mm²;PVC 70 °C (2 rolos de 100 m);Azul claro (Neutro);m;124");
+    assert!(linhas[2].starts_with("Eletrodutos;") && linhas[2].ends_with(";m;12,3") && linhas[2].contains("Ø20"), "{}", linhas[2]);
+    // O `;` e as aspas dentro de um campo não quebram as colunas.
+    assert_eq!(linhas[3], "Disjuntores;\"Disjuntor 1P 16 A; curva C \"\"DIN\"\"\";;;un;3");
+    // Gravado em disco, com os acentos.
+    let arquivo = std::env::temp_dir().join(format!("free-eletrica-materiais-{}.csv", std::process::id()));
+    let d = planta();
+    let an = analisar(&d);
+    let n = materiais::exportar_planilha(&d, &an, &setup, &arquivo).unwrap();
+    let lido = std::fs::read_to_string(&arquivo).unwrap();
+    let _ = std::fs::remove_file(&arquivo);
+    assert!(n > 0 && lido.starts_with('\u{FEFF}') && lido.contains("Descrição"));
+    assert!(materiais::exportar_planilha(&d, &an, &setup, std::path::Path::new("/nao/existe/x.csv")).is_err());
+}
+
+#[test]
+fn eletroduto_que_sobe_e_que_desce_sao_nos_sem_caixa_comprada() {
+    let setup = Setup::default();
+    let mut d = metros();
+    biblioteca::garantir_base(&mut d, &setup, 1.0);
+    // O círculo e a seta: saindo do centro para fora (sobe) ou de fora para o centro (desce).
+    let ponta =
+        |n: &str| d.blocks[n].entities.iter().find_map(|e| if let EntityKind::Solid(s) = &e.kind { Some(s.corners[0]) } else { None }).unwrap();
+    let raio = |n: &str| d.blocks[n].entities.iter().find_map(|e| if let EntityKind::Circle(c) = &e.kind { Some(c.radius) } else { None }).unwrap();
+    let (sobe, desce) = (ponta(biblioteca::BLOCO_SOBE), ponta(biblioteca::BLOCO_DESCE));
+    assert!(sobe.x.hypot(sobe.y) > raio(biblioteca::BLOCO_SOBE), "a seta do que sobe sai do círculo: {sobe:?}");
+    assert!(desce.x.hypot(desce.y) < 1e-9, "a seta do que desce entra no centro: {desce:?}");
+    // Um nó do grafo, como uma caixa: o eletroduto do pavimento termina nele.
+    let q = qd(&mut d, 0.0, 0.0);
+    let s = biblioteca::inserir_ponto(&mut d, biblioteca::BLOCO_SOBE, [3.0, 0.0], 0.0, &[], &setup).unwrap();
+    eletroduto(&mut d, (0.0, 0.0), (3.0, 0.0));
+    let an = analisar(&d);
+    let p = an.ponto(s).unwrap();
+    assert_eq!((p.tipo, p.caixa), (TipoPonto::Caixa, Some(familia::CaixaFisica::Nenhuma)));
+    let rede = rota::Rede::montar(&d, &setup, &an.pontos, 1.0);
+    assert!(rede.soltos.is_empty() && rede.conectado(q), "o trecho liga o quadro à subida");
+    // Sobe até o teto, desce pelo piso; nenhuma caixa entra na lista de materiais por eles.
+    assert!(perto(rota::altura(p, &setup), setup.pe_direito, 1e-9));
+    let m = materiais::levantar(&d, &an, &setup);
+    assert!(m.caixas.is_empty(), "{:?}", m.caixas);
+    for n in [biblioteca::BLOCO_SOBE, biblioteca::BLOCO_DESCE] {
+        assert!(biblioteca::BLOCOS_BASE.contains(&n));
+        assert!(legenda::linhas(&an, None).iter().all(|(b, _)| b != biblioteca::BLOCO_DESCE), "só os usados entram na legenda de pontos");
+    }
+}
+
+#[test]
+fn diagnostico_lista_os_avisos_dos_circuitos_no_ponto_de_cada_um() {
+    let mut d = metros();
+    let q = qd(&mut d, 0.0, 0.0);
+    let a = tug(&mut d, 2.0, 0.0, "3");
+    let b = inserir(
+        &mut d,
+        "TOMADA",
+        4.0,
+        0.0,
+        &[("TIPO_PONTO", "TUG"), ("POTENCIA", "600VA"), ("TENSAO", "220V"), ("CIRCUITO", "3"), ("ALTURA", "0,30")],
+    );
+    let itens = inspecao::diagnostico(&d, &analisar(&d), &Setup::default(), q);
+    let de = |h: Handle| itens.iter().filter(|i| i.handle == h).map(|i| i.motivo.clone()).collect::<Vec<_>>();
+    // O ponto de 127 V num circuito que ficou em 220 V: o aviso fica nele, com o circuito.
+    assert!(de(a).iter().any(|m| m.starts_with("Circuito 3: ponto com tensão divergente (127 V")), "{itens:?}");
+    assert!(de(b).iter().all(|m| !m.contains("divergente")), "{itens:?}");
+    let item = itens.iter().find(|i| i.handle == a && i.motivo.contains("divergente")).unwrap();
+    assert_eq!((item.nivel, item.pos), (inspecao::Nivel::Amarelo, [2.0, 0.0]));
+    // Do mais grave ao menos.
+    assert!(itens.windows(2).all(|w| w[0].nivel <= w[1].nivel));
+}
+
+#[test]
+fn disjuntor_geral_travado_leva_o_cabo_automatico_junto() {
+    let cfg = nbr5410::Config { isolacao: nbr5410::Isolacao::Pvc, ..Config::default() };
+    // 30 A demandados: sozinho, o alimentador fica num cabo menor que 50 A.
+    let auto = quadro::alimentador(30.0, 3, 220.0, &cfg, &quadro::ConfigQuadro::default());
+    assert!(auto.iz.unwrap() < 50.0, "{auto:?}");
+    // O disjuntor geral de 50 A travado com a seção automática: o cabo sobe até comportar os 50 A, sem aviso.
+    let config = quadro::ConfigQuadro { disjuntor_geral: Some(50.0), ..Default::default() };
+    let a = quadro::alimentador(30.0, 3, 220.0, &cfg, &config);
+    assert_eq!(a.disjuntor, Some(50.0));
+    assert!(a.iz.unwrap() >= 50.0 && a.secao.unwrap() > auto.secao.unwrap(), "{a:?}");
+    assert!(a.avisos.is_empty(), "{:?}", a.avisos);
+    assert_eq!(a.secao_sugerida, None);
+    let menor = nbr5410::SECOES.iter().copied().filter(|s| *s >= 2.5 && *s < a.secao.unwrap());
+    let carregados = nbr5410::condutores_carregados(3);
+    for s in menor {
+        let iz = nbr5410::capacidade_no_metodo(nbr5410::indice_secao(s).unwrap(), carregados, cfg.isolacao, cfg.metodo).unwrap();
+        assert!(iz * cfg.fct * cfg.fca < 50.0, "{s} mm² já comportava");
+    }
+    // A seção travada pequena demais: avisa e sugere a menor que comporta.
+    let config = quadro::ConfigQuadro { disjuntor_geral: Some(50.0), secao_geral: Some(4.0), ..Default::default() };
+    let a2 = quadro::alimentador(30.0, 3, 220.0, &cfg, &config);
+    assert_eq!(a2.secao_sugerida, a.secao);
+    assert!(a2.avisos.iter().any(|t| t.contains("acima da capacidade") && t.contains("mm² ou mais")), "{:?}", a2.avisos);
+}
+
+#[test]
 fn interruptor_paralelo_leva_retornos_paralelos() {
     let mut d = metros();
     let q = qd(&mut d, 0.0, 0.0);
@@ -1712,7 +1899,7 @@ fn tags_de_fiacao_guardam_a_posicao_e_acompanham_o_projeto() {
     assert!(perto(ins.insert.x, 0.0, 1e-9) && perto(ins.insert.y, -2.5, 1e-9), "{ins:?}");
     assert!(perto(ins.rotation, std::f64::consts::FRAC_PI_2, 1e-9), "trecho vertical lê de baixo para cima: {}", ins.rotation);
     let textos = textos_da_tag(&d, &ins);
-    assert!(textos.contains(&"3".to_string()) && textos.contains(&"#4".to_string()) && textos.contains(&"%%c20".to_string()), "{textos:?}");
+    assert!(textos.contains(&"3".to_string()) && textos.contains(&"#4".to_string()) && textos.contains(&"Ø20".to_string()), "{textos:?}");
     // O eletroduto guarda as pontas, a tag, o diâmetro e os fios.
     let xd = xdata::ler(&d.model.get(aresta).unwrap().common.xdata);
     assert!(xd.contains(&(rota::CHAVE_TAG.to_string(), tag.hex())), "{xd:?}");
@@ -1767,7 +1954,7 @@ fn tag_sem_dados_mostra_o_aviso_e_marcas_antigas_somem() {
     assert!(d.model.get(antiga).is_none());
     let (_, ins) = tag_de(&d, h);
     let textos = textos_da_tag(&d, &ins);
-    assert!(textos.contains(&"?".to_string()) && textos.contains(&"%%c?".to_string()), "{textos:?}");
+    assert!(textos.contains(&"?".to_string()) && textos.contains(&"Ø?".to_string()), "{textos:?}");
 }
 
 #[test]
@@ -1783,7 +1970,7 @@ fn textos_da_tag_nao_se_sobrepoem() {
     let textos: Vec<Text> =
         d.blocks[&ins.block].entities.iter().filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.clone()) } else { None }).collect();
     let (base, topo) = (|t: &Text| t.insert.y - t.height / 2.0, |t: &Text| t.insert.y + t.height / 2.0);
-    let diametro = textos.iter().find(|t| t.value.starts_with("%%c")).unwrap();
+    let diametro = textos.iter().find(|t| t.value.starts_with("Ø")).unwrap();
     let secoes: Vec<&Text> = textos.iter().filter(|t| t.value.starts_with('#')).collect();
     assert_eq!(secoes.len(), 2);
     assert!(textos.iter().filter(|t| t.insert.y > 0.0).all(|t| base(t) > 0.05), "circuito encosta nas marcas");
@@ -3568,7 +3755,7 @@ fn tag_com_chamada_em_angulo_livre_e_base() {
         .filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some((t.value.clone(), t.insert.x, t.insert.y)) } else { None })
         .collect();
     let y_de = |v: &str| textos.iter().find(|(t, _, _)| t.starts_with(v)).map(|(_, _, y)| *y).unwrap_or_else(|| panic!("{v} em {textos:?}"));
-    assert!(y_de("1") > 0.0 && y_de("#") < 0.0 && y_de("%%c") < y_de("#"), "{textos:?}");
+    assert!(y_de("1") > 0.0 && y_de("#") < 0.0 && y_de("Ø") < y_de("#"), "{textos:?}");
     assert!(textos.iter().all(|(_, x, _)| *x > 0.0), "nenhum texto do lado da chamada: {textos:?}");
     // O modo e os dois pontos ficam no XDATA.
     let xd = xdata::ler(&d.model.get(h).unwrap().common.xdata);
@@ -4203,7 +4390,7 @@ fn telecom_em_estrela_do_rack_a_cada_ponto() {
     assert_eq!(ids(ponta), ["4"]);
     // A tag diz só a quantidade e o tipo de cabo, e o diâmetro: seis cabos (o empilhado leva dois).
     assert_eq!(no(tronco).texto_cabos, "6x UTP Cat 6");
-    assert!(no(tronco).texto_diametro.starts_with("%%c"), "{}", no(tronco).texto_diametro);
+    assert!(no(tronco).texto_diametro.starts_with("Ø"), "{}", no(tronco).texto_diametro);
     // O eletroduto: o menor do tipo com até 40 % de ocupação.
     for h in [tronco, meio, ponta] {
         let tr = no(h);
@@ -4253,7 +4440,7 @@ fn telecom_em_estrela_do_rack_a_cada_ponto() {
     let EntityKind::Insert(i) = &d.model.get(tag).unwrap().kind else { panic!("tag") };
     let textos: Vec<String> = textos_do_bloco(&d, &i.block).into_iter().map(|t| t.0).collect();
     assert_eq!(textos[0], "7x UTP Cat 6", "{textos:?}");
-    assert!(textos[1].starts_with("%%c") && textos.len() == 2, "{textos:?}");
+    assert!(textos[1].starts_with("Ø") && textos.len() == 2, "{textos:?}");
     // O diâmetro e os cabos ficam no eletroduto, e o comprimento no ponto.
     let xd = xdata::ler(&d.model.get(tronco).unwrap().common.xdata);
     assert!(xd.iter().any(|(k, v)| k.starts_with(telecom::CHAVE_CABOS) && v.contains("1:UTP Cat 6:1")), "{xd:?}");
@@ -4326,7 +4513,7 @@ fn telecom_com_dois_racks_e_textos_da_tag() {
     assert_eq!(telecom::texto_ids(&cabos), "D-01..D-04, FO-01");
     // Na tag, só a quantidade e o tipo de cabo em cima, e o diâmetro embaixo.
     assert_eq!(telecom::texto_cabos(&cabos), "1x Fibra N2 + 5x UTP Cat 6");
-    assert_eq!(telecom::texto_diametro(Some(25.0)), "%%c25");
+    assert_eq!(telecom::texto_diametro(Some(25.0)), "Ø25");
     assert_eq!(telecom::texto_ids(&cabos[..2]), "D-01, D-02");
     let numeros = [c("1", "UTP Cat 6", 1), c("2", "UTP Cat 6", 1), c("3", "UTP Cat 6", 1), c("5", "UTP Cat 6", 1)];
     assert_eq!(telecom::texto_ids(&numeros), "1..3, 5");
@@ -4588,9 +4775,29 @@ fn legenda_separada_por_disciplina() {
     assert!(textos_simb.contains(&unifilar::TITULO_SIMBOLOGIA.to_string()), "{textos_simb:?}");
     assert!(unifilar::SIMBOLOGIA.iter().all(|v| textos_simb.contains(&v.to_string())));
     assert!(!textos_do_bloco(&d, "LEGENDA_SIMBOLOS_ELETRICA").iter().any(|t| t.0 == unifilar::TITULO_SIMBOLOGIA), "tabelas separadas");
-    // Regenerar refaz as duas legendas e a simbologia, sem mexer nas inserções.
-    assert_eq!(fiacao::regenerar(&mut d, &setup, None).unwrap().legendas, 3);
+    // Embaixo da legenda elétrica, a simbologia de fiação e eletrodutos: as quatro marcas, os três caminhamentos
+    // e o eletroduto que sobe e o que desce.
+    let fiacao_h = legenda::simbologia_fiacao(&d).expect("a simbologia de fiação e eletrodutos");
+    let y_de = |d: &Drawing, h: Handle| match &d.model.get(h).unwrap().kind {
+        EntityKind::Insert(i) => i.insert.y,
+        _ => f64::NAN,
+    };
+    assert!(y_de(&d, fiacao_h) < y_de(&d, he) && perto(x_de(&d, fiacao_h), x_de(&d, he), 1e-9), "embaixo da legenda elétrica");
+    let textos_fiacao: Vec<String> = textos_do_bloco(&d, legenda::BLOCO_FIACAO).into_iter().map(|t| t.0).collect();
+    for t in [legenda::TITULO_FIACAO, "Condutor fase", "Condutor neutro", "Condutor de proteção", "Condutor de retorno", "teto", "parede", "piso"] {
+        assert!(textos_fiacao.iter().any(|x| x.contains(t)), "{t}: {textos_fiacao:?}");
+    }
+    assert!(textos_fiacao.contains(&"Eletroduto que sobe".to_string()) && textos_fiacao.contains(&"Eletroduto que desce".to_string()));
+    let marcas: Vec<String> = d.blocks[legenda::BLOCO_FIACAO]
+        .entities
+        .iter()
+        .filter_map(|e| if let EntityKind::Insert(i) = &e.kind { Some(i.block.clone()) } else { None })
+        .collect();
+    assert!(marcas.len() == 4 && fiacao::TipoCondutor::TODOS.iter().all(|t| marcas.contains(&t.bloco().to_string())), "{marcas:?}");
+    // Regenerar refaz as duas legendas, a simbologia do unifilar e a da fiação, sem mexer nas inserções.
+    assert_eq!(fiacao::regenerar(&mut d, &setup, None).unwrap().legendas, 4);
     assert_eq!(legenda::simbologia_unifilar(&d), Some(simbologia));
+    assert_eq!(legenda::simbologia_fiacao(&d), Some(fiacao_h));
     // Inserir de novo a mesma disciplina só move; a simbologia vai junto com a elétrica.
     assert_eq!(legenda::inserir(&mut d, &an, [30.0, 0.0], 1.0, Some(D::Telecom)).unwrap(), ht);
     assert_eq!(legenda::legendas(&d).len(), 2);

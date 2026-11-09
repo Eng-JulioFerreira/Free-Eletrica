@@ -495,9 +495,17 @@ pub fn da_base(nome: &str) -> Option<Familia> {
         "RACK" => (C::QuadroDados, txt("Rack de dados", "Rack de dados")),
         "CX-PASSAGEM" => (C::Caixa, txt("Caixa de passagem", "Caixa de passagem")),
         "CX-OCT" => (C::Caixa, txt("Caixa de passagem octogonal (teto)", "Caixa octogonal 4x4\" de teto")),
+        "ELE-SOBE" => (C::Caixa, txt("Eletroduto que sobe", "Saída de eletroduto para o pavimento de cima")),
+        "ELE-DESCE" => (C::Caixa, txt("Eletroduto que desce", "Saída de eletroduto para o pavimento de baixo")),
         _ => return None,
     };
     com(categoria, legenda, material, &|f| {
+        // A prumada não é uma caixa comprada: é a passagem do eletroduto pela laje (sobe) ou pelo piso (desce).
+        if nome == "ELE-SOBE" || nome == "ELE-DESCE" {
+            f.caixa = CaixaFisica::Nenhuma;
+            f.potencia = None;
+            f.ref_altura = if nome == "ELE-SOBE" { RefAltura::Teto } else { RefAltura::Piso };
+        }
         if nome == "TOM-TUE" {
             f.ref_altura = RefAltura::Media;
         }

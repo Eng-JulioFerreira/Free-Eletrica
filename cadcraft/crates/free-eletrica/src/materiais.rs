@@ -303,6 +303,84 @@ pub fn levantar(doc: &Drawing, analise: &Analise, setup: &Setup) -> Materiais {
     m
 }
 
+// ---------------------------------------------------------------- a planilha (Excel)
+
+/// As colunas da planilha da lista de materiais.
+pub const COLUNAS_PLANILHA: [&str; 6] = ["Categoria", "Item / Descrição", "Isolação / Especificação", "Cor / Função", "Unidade", "Quantidade"];
+
+/// Um número com vírgula decimal e as casas pedidas, como o Excel em português lê.
+fn numero_br(v: f64, casas: usize) -> String {
+    if !v.is_finite() {
+        return String::new();
+    }
+    format!("{v:.casas$}").replace('.', ",")
+}
+
+/// As linhas da planilha da lista de materiais, sem o cabeçalho: uma por item, com as [`COLUNAS_PLANILHA`].
+pub fn linhas_da_planilha(m: &Materiais) -> Vec<[String; 6]> {
+    let mut v: Vec<[String; 6]> = Vec::new();
+    for c in &m.cabos {
+        let item = format!("{} #{} mm²", c.nome, br(c.secao));
+        let rolos = if c.rolos == 1 { "1 rolo de 100 m".to_string() } else { format!("{} rolos de 100 m", c.rolos) };
+        v.push([
+            "Cabos".into(),
+            item,
+            format!("{} ({rolos})", c.tipo.isolacao().nome()),
+            format!("{} ({})", c.cor, c.funcao.nome()),
+            "m".into(),
+            numero_br(c.metros.ceil(), 0),
+        ]);
+    }
+    for e in &m.eletrodutos {
+        let item = e.diametro.map_or_else(|| e.tipo.nome().to_string(), |d| format!("{} Ø{}", e.tipo.nome(), br(d)));
+        let espec = e.diametro.map_or_else(|| "sem diâmetro: rode a fiação".to_string(), |d| format!("Ø{} mm", br(d)));
+        v.push(["Eletrodutos".into(), item, espec, String::new(), "m".into(), numero_br(e.metros, 1)]);
+    }
+    let contados = |v: &mut Vec<[String; 6]>, categoria: &str, lista: &[ItemContado]| {
+        v.extend(lista.iter().map(|i| [categoria.to_string(), i.nome.clone(), String::new(), String::new(), "un".into(), i.quantidade.to_string()]));
+    };
+    contados(&mut v, "Caixas", &m.caixas);
+    if m.conjuntos.is_empty() {
+        contados(&mut v, "Pontos", &m.pontos);
+    } else {
+        contados(&mut v, "Pontos", &m.conjuntos);
+    }
+    contados(&mut v, "Disjuntores", &m.disjuntores);
+    contados(&mut v, "Quadros e proteções", &m.quadros);
+    for c in &m.cabos_telecom {
+        v.push(["Telecom".into(), c.nome.clone(), String::new(), String::new(), "m".into(), numero_br(c.metros.ceil(), 0)]);
+    }
+    contados(&mut v, "Telecom", &m.telecom);
+    v
+}
+
+/// Um campo do CSV: entre aspas quando tem `;`, aspas ou quebra de linha (as aspas de dentro dobram).
+fn campo_csv(t: &str) -> String {
+    if t.contains([';', '"', '\n', '\r']) { format!("\"{}\"", t.replace('"', "\"\"")) } else { t.to_string() }
+}
+
+/// A planilha da lista de materiais em CSV para o Excel em português: UTF-8 com BOM (os acentos abrem certos),
+/// `;` entre as colunas, vírgula decimal e quebras de linha CRLF.
+pub fn planilha_csv(m: &Materiais) -> String {
+    let mut s = String::from('\u{FEFF}');
+    let mut linha = |campos: &[String]| {
+        s.push_str(&campos.iter().map(|c| campo_csv(c)).collect::<Vec<_>>().join(";"));
+        s.push_str("\r\n");
+    };
+    linha(&COLUNAS_PLANILHA.map(String::from));
+    for l in linhas_da_planilha(m) {
+        linha(&l);
+    }
+    s
+}
+
+/// Grava a planilha da lista de materiais do desenho em `arquivo` (`.csv`). Devolve quantos itens.
+pub fn exportar_planilha(doc: &Drawing, analise: &Analise, setup: &Setup, arquivo: &std::path::Path) -> Result<usize, String> {
+    let m = levantar(doc, analise, setup);
+    std::fs::write(arquivo, planilha_csv(&m)).map_err(|e| format!("não foi possível gravar {}: {e}", arquivo.display()))?;
+    Ok(linhas_da_planilha(&m).len())
+}
+
 // ---------------------------------------------------------------- a tabela na prancha
 
 /// O bloco da tabela da lista de materiais: uma por desenho.
@@ -442,7 +520,7 @@ pub fn inserir_tabela(doc: &mut Drawing, analise: &Analise, setup: &Setup, pos: 
     let (metros, _) = setup.unidade.metros(doc.header.i64("INSUNITS", 0));
     let metros = if metros > 0.0 { metros } else { 1.0 };
     let m = levantar(doc, analise, setup);
-    crate::tabela::garantir_estilo(doc, setup.fonte_textos);
+    crate::tabela::garantir_estilo(doc, &setup.fonte_textos);
     gravar_tabela(doc, &m, metros);
     if let Some(h) = tabela_inserida(doc)
         && let Some(mut e) = doc.model.get(h).map(|e| (**e).clone())

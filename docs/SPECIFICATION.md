@@ -70,7 +70,7 @@ continuam sendo lidos.
 | Eletroduto de telecom | `telecom_cables.<n>` (`ID:cabo:quantidade;...`) e `nominal_diameter_mm` |
 
 O tipo de linha e a cor do perfil ficam na própria entidade do eletroduto. O diagrama unifilar é o bloco
-`UNIFILAR_<handle do quadro>`; a vista frontal, `QUADRO_FRONTAL_<handle do quadro>`; a tabela, `QUADRO_TABELA_<handle do quadro>`; a tabela do rack, `TELECOM_RACK_<handle do rack>`; a lista de materiais, `LISTA_MATERIAIS`; e as legendas, `LEGENDA_SIMBOLOS_ELETRICA` (com a simbologia do unifilar ao lado, `LEGENDA_SIMBOLOGIA_UNIFILAR`) e `LEGENDA_SIMBOLOS_TELECOM`.
+`UNIFILAR_<handle do quadro>`; a vista frontal, `QUADRO_FRONTAL_<handle do quadro>`; a tabela, `QUADRO_TABELA_<handle do quadro>`; a tabela do rack, `TELECOM_RACK_<handle do rack>`; a lista de materiais, `LISTA_MATERIAIS`; e as legendas, `LEGENDA_SIMBOLOS_ELETRICA` (com a simbologia do unifilar ao lado, `LEGENDA_SIMBOLOGIA_UNIFILAR`, e a de fiação e eletrodutos embaixo, `LEGENDA_FIACAO_ELETRODUTOS`) e `LEGENDA_SIMBOLOS_TELECOM`.
 
 As configurações do Setup, incluindo PE compartilhado, FCA fixo, catálogos, perfis e tabelas de demanda próprias, ficam nas
 preferências do programa, não no DXF.
@@ -79,8 +79,11 @@ preferências do programa, não no DXF.
 
 Tudo o que o programa escreve no desenho (tabelas, unifilar, vista frontal, legendas, tags, lista de materiais e os
 atributos dos blocos de fábrica) usa o estilo de texto `FREE_ELETRICA`. A fonte dele é a de `fonteTextos` nas configurações
-(`arial` é o padrão; `isocp`, `tahoma`, `calibri`, `simplex`): só o nome do arquivo (`arial.ttf`, `isocp.shx`...) vai para o
-DXF, nenhuma fonte vem com o programa. Cada gerador e o ELEREGEN acertam o estilo, e os textos já desenhados mudam junto.
+(o nome do arquivo: `arial.ttf` é o padrão; `calibri.ttf`, `tahoma.ttf`, `isocp.shx` ou qualquer TrueType/OpenType
+instalada, listada por `eletrica.fontes`). Os valores de versões anteriores (`arial`, `isocp`...) continuam valendo; `simplex`,
+vetorial e sem acentos, volta como Arial. Só o nome do arquivo vai para o DXF, nenhuma fonte vem com o programa. Cada
+gerador e o ELEREGEN acertam o estilo, e os textos já desenhados mudam junto. O diâmetro das tags é o `Ø` (U+00D8), que
+toda fonte tem; o `%%c` do CAD vira `⌀` (U+2300), que falta em Arial, Calibri e Tahoma.
 
 ### Letras de comando
 
@@ -93,6 +96,21 @@ tira a letra de quem a tinha no escopo e ficou fora da seleção: é assim que u
 (o primeiro clicado é o início) e os intermediários no meio; o grupo que não fecha é recusado. Um bloco sem tipo segue a
 posição.
 
+O ELECOMANDO e o ELECIRCUITO montam a seleção fora do desenho (`circuito::SelecaoComando`, `circuito::SelecaoCircuito`,
+por desenho) e só gravam ao confirmar (`editar::aplicar_comando`, `editar::aplicar_circuito`). No modo Editar, o primeiro
+clique num ponto que já tem comando (ou circuito) carrega o grupo dele; depois cada clique tira ou põe. Gravar um circuito
+põe os marcados nele e tira os desmarcados que ele tinha; a descrição, o esquema e a tensão vão para o quadro junto.
+
+### Diagnóstico do quadro
+
+`eletrica.diagnostico` junta a inspeção do quadro (pontos sem circuito, fora da rede, queda, ocupação, eletrodutos soltos)
+com os avisos de cada circuito e do quadro, cada um no ponto a que se refere: a tensão divergente em cada ponto que
+diverge do circuito, a tensão fora das do quadro, os outros avisos do circuito no primeiro ponto dele e os do quadro
+(alimentador, fases, DPS) no próprio quadro.
+
+O disjuntor geral travado com a seção automática leva o cabo do alimentador à menor seção com Iz ≥ In (5.3.4.1); com a
+seção também travada e pequena demais, o alimentador avisa e sugere a menor que comporta (`secaoSugerida`).
+
 ### Lista de materiais
 
 Os cabos são medidos condutor a condutor em cada trecho de eletroduto (planta e desníveis até os blocos), vezes a folga de
@@ -100,6 +118,14 @@ materiais, e agrupados por (tipo de cabo, seção, função): cada fase que o ci
 neutro azul-claro (NBR 5410, 6.1.5.3.1), os retornos que passam no trecho e o condutor de proteção verde ou verde-amarelo
 (6.1.5.3.2), um só por trecho quando é compartilhado. As cores das fases e do retorno ficam nas configurações. Um circuito
 sem eletrodutos até o quadro entra pelo percurso estimado, sem os retornos, com aviso.
+
+`eletrica.materiais.exportar` grava a lista como planilha CSV para o Excel em português: UTF-8 com BOM, `;` entre as
+colunas, vírgula decimal e CRLF, com as colunas Categoria, Item / Descrição, Isolação / Especificação, Cor / Função,
+Unidade e Quantidade. O arquivo fica sempre em `.csv`.
+
+Os blocos `ELE-SOBE` e `ELE-DESCE` (eletroduto que sobe e que desce, NBR 5444: círculo com a seta saindo ou entrando) são
+nós do grafo como uma caixa (`TIPO_PONTO = CAIXA DE PASSAGEM`), sem caixa física na lista de materiais; o que sobe fica
+na altura do teto e o que desce no piso.
 
 ## Comandos
 
@@ -111,10 +137,10 @@ próprio `CommandSpec`.
 | Pontos | `eleponto`, `eletrica.ponto.modelo`, `eletrica.ponto.altura`, `eletrica.ponto.tensao`, `eletrica.ponto.demanda`, `eletrica.ponto.excluir`, `eletrica.blocos`, `eletrica.bootstrap` |
 | Famílias | `eletrica.familia.ler`, `.definir`, `.geometria`, `.atributos`, `elefamilia_conector` |
 | Atributos | `eletrica.atributos`, `eletrica.atributo.definir` |
-| Circuitos | `elecircuito`, `eleremoverponto`, `elecomando`, `eletrica.comando.selecao` (a mini-barra do ELECOMANDO), `eletrica.circuito.criar`, `.definir`, `.descrever`, `.juntar`, `.excluir`, `.alvo` |
+| Circuitos | `elecircuito`, `eleremoverponto`, `elecomando`, `eletrica.comando.selecao` (a mini-barra do ELECOMANDO), `eletrica.circuito.selecao` (a do ELECIRCUITO), `eletrica.circuito.criar`, `.definir`, `.descrever`, `.juntar`, `.excluir`, `.alvo` |
 | Eletrodutos | `eleeletroduto`, `eletrica.eletroduto.modelo`, `.dividir`, `.definir`, `eletrica.eletrodutos` |
-| Cálculo | `eletrica.dimensionar` (com `unifilar` e `frontal`), `eletrica.diagnostico`, `eletrica.rotear`, `eletrica.sobrescrever`, `eletrica.quadro`, `eletrica.dr.definir`, `eletrica.dr.excluir`, `eletrica.quadro.equilibrar`, `eletrica.cargas`, `eletrica.demanda.tabelas`, `.salvar`, `.excluir`, `eletrica.setup` |
-| Documentação | `elefiacao` (com `ancora`: direto no eletroduto; com `tag` também: linha de chamada), `eletrica.fiacao.modo`, `eleregen`, `elequadro_tabela`, `eletrica.unifilar`, `eleunifilar`, `eletrica.quadro.frontal`, `elequadro_frontal`, `eletrica.documentacao.alvo` (o quadro ou rack da mini-barra), `elelegenda`, `eletrica.materiais`, `elemateriais_tabela`, `eletrica.inspecionar`, `eletrica.analisar` |
+| Cálculo | `eletrica.dimensionar` (com `unifilar` e `frontal`), `eletrica.diagnostico`, `eletrica.rotear`, `eletrica.sobrescrever`, `eletrica.quadro`, `eletrica.dr.definir`, `eletrica.dr.excluir`, `eletrica.quadro.equilibrar`, `eletrica.cargas`, `eletrica.demanda.tabelas`, `.salvar`, `.excluir`, `eletrica.setup`, `eletrica.fontes` |
+| Documentação | `elefiacao` (com `ancora`: direto no eletroduto; com `tag` também: linha de chamada), `eletrica.fiacao.modo`, `eleregen`, `elequadro_tabela`, `eletrica.unifilar`, `eleunifilar`, `eletrica.quadro.frontal`, `elequadro_frontal`, `eletrica.documentacao.alvo` (o quadro ou rack da mini-barra), `elelegenda`, `eletrica.materiais`, `eletrica.materiais.exportar`, `elemateriais_tabela`, `eletrica.inspecionar`, `eletrica.analisar` |
 | Telecom | `televincular`, `telerotear`, `eletrica.telecom`, `eletrica.telecom.ponto`, `telefiacao` (os mesmos modos do `elefiacao`), `teletabela`, `telelegenda` |
 
 Comandos que só existem na interface, porque abrem janelas: `ELETRICA`, `ELECONFIG`, `ELEPONTOS`, `ELEBLOCOS`, `ELEATRIBUTOS`,

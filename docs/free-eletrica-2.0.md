@@ -442,7 +442,7 @@ Ajustes de interface e de prancha:
 ## Comandos em sequência (ELECOMANDO)
 
 - A próxima letra olha todos os interruptores (simples, paralelos e intermediários) e luminárias do projeto: depois de `a`,
-  `b` e `c` vem `d`, também para um paralelo. Nas Configurações > Geral: o escopo (global ou por quadro) e o padrão depois
+  `b` e `c` vem `d`, também para um paralelo. Nas Configurações > Comandos: o escopo (global ou por quadro) e o padrão depois
   do `z` (`aa`, `bb`... ou `a1`, `b1`...).
 - O ELECOMANDO ficou contínuo, com mini-barra: o comando atual (a letra livre, ou um em uso para editar), a contagem do
   que foi clicado com o esquema, e Confirmar (Enter), Limpar seleção e Sair (ESC). Interruptores e luminárias em qualquer
@@ -453,9 +453,26 @@ Ajustes de interface e de prancha:
 ## Fonte com acentos, tags de retorno e destaque no ELECOMANDO
 
 - **Fonte:** os textos gerados usam o estilo `FREE_ELETRICA`, com Arial por padrão (acentos e ç); Configurações > Geral
-  escolhe entre Arial, ISOCP, Tahoma, Calibri e Simplex, e Atualizar tags e tabelas aplica a troca em tudo. Antes eles
+  escolhe entre Arial, ISOCP, Tahoma e Calibri (hoje, qualquer fonte instalada), e Atualizar tags e tabelas aplica a troca em tudo. Antes eles
   usavam o estilo Standard, na fonte de traço do CADCraft, que não tem as letras acentuadas.
 - **Tags de retorno:** só a letra do comando, sem o apóstrofo dos paralelos; o número do circuito fica à esquerda da
   primeira letra, e o passo entre as marcas cresce para os textos vizinhos não se tocarem.
 - **ELECOMANDO:** a mini-barra mostra "Interruptores: X | Luminárias: Y -> Esquema: ..." e os blocos clicados ficam em
   destaque no desenho (os interruptores com o número da ordem do clique) até confirmar.
+
+## Mini-barras de criar e editar, fontes do sistema, prumadas, diagnóstico e Excel
+
+- **Criar / editar comando:** o alternador Novo comando | Editar comando existente. Editar carrega um comando pela lista ou
+  por um clique num ponto dele, com o grupo em destaque; cada clique tira ou põe, e Salvar / Confirmar grava.
+- **Criar / editar circuito:** a mesma mini-barra: quadro, número, descrição, esquema e tensão, os pontos clicados em
+  destaque, Confirmar (Enter), Limpar seleção e Sair (ESC). Nada vai para o desenho até confirmar. Editar carrega um
+  circuito pela lista ou por um clique num ponto dele: azul o que já era, verde o que entra, vermelho o que sai.
+- **Fontes:** Configurações > Geral lista Arial, Calibri, Tahoma e ISOCP e todas as fontes instaladas, com busca; a Simplex,
+  vetorial e sem acentos, saiu. A sequência das letras foi para a aba nova Configurações > Comandos.
+- **Diâmetro nas tags:** `Ø` (U+00D8) no lugar do `%%c`, que saía como quadrado vazio em Arial, Calibri e Tahoma.
+- **Prumadas:** os blocos `ELE-SOBE` e `ELE-DESCE`, também na mini-barra do eletroduto, e a simbologia de fiação e
+  eletrodutos embaixo da legenda elétrica (as quatro marcas dos condutores, os três caminhamentos e as prumadas).
+- **Dimensionar projeto:** a etapa 1 lista também os avisos de cada circuito e do quadro (tensão divergente por ponto,
+  tensão fora das do quadro, alimentador...), cada um com "Ir para o ponto", que centraliza e destaca. O disjuntor geral
+  travado (50 A) com o cabo automático sobe o cabo até comportá-lo, em vez de acusar o alimentador.
+- **Lista de materiais:** Inserir Tabela na Prancha (DXF) e Exportar para Excel (.csv), lado a lado.

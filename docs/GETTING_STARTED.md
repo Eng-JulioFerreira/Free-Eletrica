@@ -52,17 +52,22 @@ demanda. Para mudar um ponto já inserido, selecione-o e abra o **Inspetor de at
 ## Passo 4: Criando o quadro, os circuitos e os comandos (`ELECARGAS` / `ELECOMANDO`)
 
 1. **O quadro:** em **Inserir pontos**, escolha a categoria **Quadros/Racks** e o bloco **Quadro QDG**, e clique na planta.
-2. **Os circuitos:** clique em **Criar circuito** (`ELECIRCUITO`), depois no quadro, informe o número e clique nos pontos do
-   circuito. Enter termina. A mini-barra edita descrição, esquema e tensão.
-3. **Os comandos:** clique em **Comandos e luminárias** (`ELECOMANDO`). A mini-barra já traz a próxima letra livre
+2. **Os circuitos:** clique em **Criar / editar circuito** (`ELECIRCUITO`). Na mini-barra, **Criar novo circuito** já traz
+   o quadro (o único do desenho, ou escolha na lista ou clicando nele) e o próximo número livre; preencha a descrição
+   (Iluminação, TUGs Sala...), o esquema e a tensão e clique nos pontos do circuito, que ficam em destaque (um segundo
+   clique tira). **Confirmar circuito (Enter)** grava e já prepara o próximo; Enter sem nada clicado ou **Sair (ESC)**
+   termina. Em **Editar circuito**, escolha o circuito na lista ou clique num ponto dele: os pontos do circuito ficam em
+   azul, os que você põe em verde e os que tira em vermelho; **Salvar / Confirmar (Enter)** grava.
+3. **Os comandos:** clique em **Criar / editar comando** (`ELECOMANDO`). A mini-barra já traz a próxima letra livre
    (`Comando atual:`) e conta o que você clicou. Clique nos interruptores e nas luminárias do comando, em qualquer ordem
    (um segundo clique tira), e tecle Enter ou **Confirmar comando**. O esquema vem do tipo de cada bloco
    (`TIPO_INTERRUPTOR` ou a família), que o comando não muda: um interruptor simples comanda sozinho; com mais de um,
    os dois **paralelos** (three-way) ficam nas pontas, o clicado primeiro recebe a fase, e os **intermediários**
    (four-way) sempre no meio. Um grupo que não fecha (um simples junto de outros, um paralelo sozinho, um intermediário
    sem os dois paralelos) aparece em destaque na mini-barra e não é gravado. A letra avança sozinha para o próximo comando; Enter sem nada clicado ou **Sair (ESC)** termina. Para editar um comando,
-   escolha-o em **Editar...** ou digite a letra dele. A letra nunca repete no projeto (ou no quadro, nas Configurações >
-   Geral); depois do `z` vêm `aa`, `bb`... ou `a1`, `b1`...
+   use **Editar comando existente** e escolha a letra na lista ou clique num interruptor ou numa luminária dele: o grupo
+   inteiro fica em destaque, e cada clique tira ou põe. A letra nunca repete no projeto (ou no quadro, nas Configurações >
+   Comandos); depois do `z` vêm `aa`, `bb`... ou `a1`, `b1`...
 4. **O quadro de cargas:** **Quadro de cargas...** (`ELECARGAS`) abre o quadro embaixo do desenho, com as fases, os grupos de
    DR e a ficha de cada circuito. O menu **...** de cada linha adiciona e remove pontos, localiza o circuito e o exclui.
 
@@ -78,6 +83,9 @@ piso, com o material e os diâmetros) e o **traçado**: **Reto**, **Ângulo 45°
 - Um clique no meio de um eletroduto insere uma caixa de passagem.
 - Cruzamentos sem bloco **não conectam**: cada eletroduto liga exatamente dois blocos, como na obra.
 - O tipo de linha mostra o caminho: contínua no teto, tracejada na parede, traço e ponto no piso.
+- Para outro pavimento, use **Eletroduto sobe** ou **Eletroduto desce** na mini-barra (ou os blocos `ELE-SOBE` e
+  `ELE-DESCE` em Inserir pontos, categoria Caixas): o círculo com a seta saindo (sobe) ou entrando (desce) é um nó, como
+  uma caixa, e o eletroduto do pavimento termina nele.
 
 ## Passo 6: Dimensionando e gerando as tags (`Dimensionar projeto...` e `ELEFIACAO`)
 
@@ -85,8 +93,10 @@ Abra **Dimensionar projeto...** (`ELEDIMENSIONAR`) e escolha o quadro no topo. O
 progresso no topo (**1. Diagnóstico → 2. Circuitos → 3. Diagrama Unifilar → 4. Vista Frontal**) e os botões no rodapé.
 
 1. **Diagnóstico:** o que corrigir antes de dimensionar, do mais grave ao menos: pontos sem circuito, pontos fora da
-   rede de eletrodutos, eletrodutos soltos e trechos com ocupação ou queda de tensão acima do limite. **Localizar** leva
-   até cada um. Siga com **Avançar para Circuitos >**.
+   rede de eletrodutos, eletrodutos soltos, trechos com ocupação ou queda de tensão acima do limite e os avisos de cada
+   circuito e do quadro (ponto com tensão divergente, tensão fora das do quadro, iluminação e tomadas juntas, o
+   alimentador...). **🔍 Ir para o ponto** centraliza o desenho em cada um e o destaca com um círculo. Siga com
+   **Avançar para Circuitos >**.
 2. **Circuitos:** em cima, a temperatura ambiente (FCT), o FCA fixo, o compartilhamento do condutor de proteção, o
    critério do disjuntor e o método de instalação do quadro. Na tabela, o **esquema**, o **tipo de cabo**, o **método**, o
    **grupo DR** (na própria linha: Nenhum, IDR1, IDR2...; **+ Criar IDR** cria um grupo novo) e já o resultado: Ib, cabo,
@@ -100,7 +110,9 @@ progresso no topo (**1. Diagnóstico → 2. Circuitos → 3. Diagrama Unifilar �
      Dimensionamento ao Quadro** já grava.
 3. **Diagrama Unifilar:** o disjuntor geral (polos, corrente e curva), o cabo alimentador (seção e tipo), o DPS (marque
    **Incluir DPS no quadro**: desmarcado, o quadro fica sem DPS; classe, tensão Uc, capacidade em kA e o disjuntor de
-   proteção prévio) e a corrente e a sensibilidade de cada DR usado. O cadeado mostra o que você travou à mão.
+   proteção prévio) e a corrente e a sensibilidade de cada DR usado. O cadeado mostra o que você travou à mão. Travar o
+   disjuntor geral (50 A, por exemplo) com o cabo automático sobe o cabo até a menor seção que comporta o disjuntor; com
+   o cabo travado pequeno demais, a etapa avisa e oferece **Usar ... mm²**.
 4. **Vista Frontal:** a largura máxima por fileira (12, 16, 18 ou 24 módulos DIN), o barramento das fases (pente DIN ou
    espinha de peixe), a montagem (embutir ou sobrepor) e os módulos reserva. Neutro e terra ficam sempre nas laterais
    internas do chassi.
@@ -122,18 +134,24 @@ Na seção **Documentação e Tabelas**:
 - **Vista frontal do quadro** (`ELEQUADRO_FRONTAL`): o layout de montagem nos trilhos DIN, com os barramentos.
 - Nessas três e na **Tabela do rack**, a mini-barra no topo do desenho mostra qual quadro (ou rack) vai para a planta;
   troque nela antes de clicar. Com um quadro só, ele já vem escolhido.
-- **Legenda de símbolos** (`ELELEGENDA`): duas tabelas lado a lado, a legenda dos símbolos da planta elétrica e a
-  simbologia do diagrama unifilar. Na aba Telecom, a legenda é só a de telecomunicações.
+- **Legenda de símbolos** (`ELELEGENDA`): a legenda dos símbolos da planta elétrica, a simbologia do diagrama unifilar ao
+  lado e, embaixo, a **simbologia de fiação e eletrodutos**: as marcas de fase, neutro, terra e retorno, os traços do
+  eletroduto no teto, na parede e no piso, e o eletroduto que sobe e o que desce. Na aba Telecom, a legenda é só a de
+  telecomunicações.
 - **Lista de materiais...** (`ELEMATERIAIS`): os cabos por isolação, seção e cor (cada fase na cor dela, neutro
   azul-claro, terra verde e retorno amarelo, com os rolos de 100 m), eletrodutos, caixas, disjuntores, DR, DPS,
-  barramentos e quadros. As cores ficam em **Configurações... > Condutores**.
+  barramentos e quadros. As cores ficam em **Configurações... > Condutores**. Dois botões lado a lado: **Inserir Tabela
+  na Prancha (DXF)** e **Exportar para Excel (.csv)**, uma planilha com Categoria, Item / Descrição, Isolação /
+  Especificação, Cor / Função, Unidade e Quantidade, no padrão do Excel em português (acentos certos, `;` e vírgula
+  decimal).
 - **Tabela de materiais** (`ELEMATERIAIS_TABELA`): a mesma lista desenhada como tabela na planta.
 - **Atualizar tags e tabelas** (`ELEREGEN`): refaz tudo o que foi gerado, sem mudar as posições. Use depois de qualquer
   mudança.
 
 Os textos gerados usam o estilo `FREE_ELETRICA`, com a fonte de **Configurações... > Geral > Fonte padrão dos textos e
-tabelas no desenho** (Arial, o padrão, ISOCP, Tahoma, Calibri ou Simplex). As TrueType (Arial, Tahoma, Calibri) mostram
-acentos e ç em qualquer programa que tenha a fonte; a troca vale para tudo em **Atualizar tags e tabelas**.
+tabelas no desenho**: Arial (o padrão), Calibri, Tahoma ou ISOCP e, embaixo, todas as fontes TrueType e OpenType
+instaladas no computador, com busca. As TrueType mostram acentos e ç em qualquer programa que tenha a fonte; a troca
+vale para tudo em **Atualizar tags e tabelas**. O diâmetro das tags sai como `Ø25` (a letra Ø, que toda fonte tem).
 
 ## Passo 8: Fluxo rápido de telecomunicações (`Telecom`)
 
@@ -158,8 +176,8 @@ No seletor do topo, escolha **Telecom**.
 | Configurações... | `ELECONFIG` | Unidade, alturas, critérios, catálogos e demanda |
 | Inserir pontos | `ELEPONTOS` | Lançar e empilhar pontos com a mini-barra |
 | Blocos e famílias... | `ELEBLOCOS` | Criar e editar símbolos próprios |
-| Criar circuito | `ELECIRCUITO` | Agrupar pontos num circuito do quadro |
-| Comandos e luminárias | `ELECOMANDO` | Ligar interruptores às luminárias, um comando atrás do outro |
+| Criar / editar circuito | `ELECIRCUITO` | Criar um circuito do quadro, ou editar os pontos de um existente |
+| Criar / editar comando | `ELECOMANDO` | Ligar interruptores às luminárias, um comando atrás do outro, ou editar um |
 | Quadro de cargas... | `ELECARGAS` | Fases, DR e ficha de cada circuito |
 | Inserir eletroduto | `ELEELETRODUTO` | Ligar os blocos pelo teto, parede ou piso |
 | Dimensionar projeto... | `ELEDIMENSIONAR` | Assistente: diagnóstico, circuitos e DR, unifilar e vista frontal |
@@ -169,7 +187,7 @@ No seletor do topo, escolha **Telecom**.
 | Vista frontal do quadro | `ELEQUADRO_FRONTAL` | A montagem nos trilhos DIN |
 | Legenda de símbolos | `ELELEGENDA` | A legenda da planta e a simbologia do unifilar |
 | Atualizar tags e tabelas | `ELEREGEN` | Refazer tudo o que foi gerado |
-| Lista de materiais... | `ELEMATERIAIS` | O levantamento de materiais, com os cabos por cor |
+| Lista de materiais... | `ELEMATERIAIS` | O levantamento de materiais, com os cabos por cor, e a planilha para o Excel |
 | Tabela de materiais | `ELEMATERIAIS_TABELA` | A lista de materiais na prancha |
 | Inspecionar projeto | `ELEINSPECAO` | Os halos do que falta no projeto |
 | Numerar e vincular ao rack | `TELEVINCULAR` | Porta e rack de cada ponto de telecom |
