@@ -54,9 +54,13 @@ demanda. Para mudar um ponto já inserido, selecione-o e abra o **Inspetor de at
 1. **O quadro:** em **Inserir pontos**, escolha a categoria **Quadros/Racks** e o bloco **Quadro QDG**, e clique na planta.
 2. **Os circuitos:** clique em **Criar circuito** (`ELECIRCUITO`), depois no quadro, informe o número e clique nos pontos do
    circuito. Enter termina. A mini-barra edita descrição, esquema e tensão.
-3. **Os comandos:** clique em **Comandos e luminárias** (`ELECOMANDO`), no interruptor e nas luminárias que ele acende.
-   Para paralelos (three-way) e intermediários (four-way), clique também nos outros interruptores do mesmo comando, na
-   ordem do caminho.
+3. **Os comandos:** clique em **Comandos e luminárias** (`ELECOMANDO`). A mini-barra já traz a próxima letra livre
+   (`Comando atual:`) e conta o que você clicou. Clique nos interruptores e nas luminárias do comando, em qualquer ordem
+   (um segundo clique tira), e tecle Enter ou **Confirmar comando**: um interruptor vira simples, dois viram paralelos
+   (three-way) e três ou mais ficam paralelos nas pontas e intermediários (four-way) no meio, na ordem dos cliques. A
+   letra avança sozinha para o próximo comando; Enter sem nada clicado ou **Sair (ESC)** termina. Para editar um comando,
+   escolha-o em **Editar...** ou digite a letra dele. A letra nunca repete no projeto (ou no quadro, nas Configurações >
+   Geral); depois do `z` vêm `aa`, `bb`... ou `a1`, `b1`...
 4. **O quadro de cargas:** **Quadro de cargas...** (`ELECARGAS`) abre o quadro embaixo do desenho, com as fases, os grupos de
    DR e a ficha de cada circuito. O menu **...** de cada linha adiciona e remove pontos, localiza o circuito e o exclui.
 
@@ -148,7 +152,7 @@ No seletor do topo, escolha **Telecom**.
 | Inserir pontos | `ELEPONTOS` | Lançar e empilhar pontos com a mini-barra |
 | Blocos e famílias... | `ELEBLOCOS` | Criar e editar símbolos próprios |
 | Criar circuito | `ELECIRCUITO` | Agrupar pontos num circuito do quadro |
-| Comandos e luminárias | `ELECOMANDO` | Ligar interruptores às luminárias |
+| Comandos e luminárias | `ELECOMANDO` | Ligar interruptores às luminárias, um comando atrás do outro |
 | Quadro de cargas... | `ELECARGAS` | Fases, DR e ficha de cada circuito |
 | Inserir eletroduto | `ELEELETRODUTO` | Ligar os blocos pelo teto, parede ou piso |
 | Dimensionar projeto... | `ELEDIMENSIONAR` | Assistente: diagnóstico, circuitos e DR, unifilar e vista frontal |

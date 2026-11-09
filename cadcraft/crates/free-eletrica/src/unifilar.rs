@@ -364,13 +364,13 @@ fn pecas(r: &ResumoQuadro, alimentado_por: &str, m: f64) -> Vec<(EntityKind, Opt
     let a = &r.alimentador;
     p.texto(&a.secao.map_or("#-".to_string(), |s| format!("#{}", br(s))), [0.45, entrada - 0.18], MENOR, HAlign::Center);
     p.disjuntor(geral_x, entrada, 0.26, a.polos_geral);
+    // A curva vai na mesma linha: embaixo do geral fica o texto do DPS.
     p.texto(
-        &format!("{}P In: {} A", a.polos_geral, a.disjuntor.map_or("-".to_string(), br)),
+        &format!("{}P In: {} A Curva {}", a.polos_geral, a.disjuntor.map_or("-".to_string(), br), a.curva_geral.codigo()),
         [geral_x + 0.13, entrada + 0.24],
         MENOR,
         HAlign::Center,
     );
-    p.texto(&format!("Curva {}", a.curva_geral.codigo()), [geral_x + 0.13, entrada - 0.14], MENOR, HAlign::Center);
     p.linha([geral_x + 0.26, entrada], [BARRA, entrada]);
     p.no(BARRA, entrada);
     // O DPS (NBR 5410, 6.3.5), quando o quadro tem: depois do geral, para o terra; com o disjuntor exclusivo

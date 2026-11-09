@@ -146,13 +146,13 @@ fn paleta_ferramentas_e_fluxo_completo() {
     assert!(a["circuitos"].as_array().unwrap().iter().all(|c| c["id"] != "3"));
     app.session.redo().unwrap();
 
-    // ELECOMANDO pelo JSON: o interruptor (sem circuito) ganha a letra livre do circuito da luz e
-    // entra no circuito dela.
+    // ELECOMANDO pelo JSON: o interruptor (sem circuito) ganha a próxima letra livre do projeto (o "a" já é de
+    // outra luz) e entra no circuito da luz.
     let r = app.run("elecomando", json!({ "interruptor": int, "luminarias": [luz] })).unwrap();
-    assert_eq!((r["comando"].as_str(), r["circuito"].as_str()), (Some("a"), Some("3")));
+    assert_eq!((r["comando"].as_str(), r["circuito"].as_str()), (Some("b"), Some("3")));
     let a = app.run("eletrica.analisar", json!({})).unwrap();
     let sw = a["pontos"].as_array().unwrap().iter().find(|p| p["tipo"] == "interruptor").unwrap();
-    assert_eq!((sw["comando"].as_str(), sw["circuito"].as_str()), (Some("a"), Some("3")));
+    assert_eq!((sw["comando"].as_str(), sw["circuito"].as_str()), (Some("b"), Some("3")));
 
     // Rotear fiação pelo JSON: TUG de 600 VA a 127 V (4,7 A) em 2,5 mm² com 6 A.
     let r = app.run("eletrica.rotear", json!({ "quadro": "QD-01" })).unwrap();
@@ -299,6 +299,9 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.get_by_label("Geral").click();
     h.run_steps(3);
     h.get_by_label("Inicializar projeto no DXF atual");
+    // A sequência das letras de comando: o escopo e o que vem depois do z.
+    h.get_by_label("Escopo da sequência de comandos");
+    h.get_by_label("Padrão após a letra z");
     h.get_by_label("Condutores").click();
     h.run_steps(3);
     h.get_by_label("Diâmetro externo dos condutores");
@@ -794,6 +797,24 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.state_mut().session.input(Input::Cancel).unwrap();
     h.run_steps(3);
     assert!(h.query_by_label("Com linha de chamada").is_none(), "a mini-barra some com o comando");
+
+    // Comandos e luminárias: a mini-barra com a letra livre, o que foi clicado e as ações.
+    h.get_by_label("Comandos e luminárias").click();
+    h.run_steps(3);
+    assert_eq!(h.state().session.running.as_ref().map(|r| r.id.as_str()), Some("elecomando"));
+    h.get_by_label("Comando atual:");
+    h.get_by_label("Interruptores selecionados: 0 | Luminárias selecionadas: 0 (sem interruptor)");
+    h.get_by_label("Limpar seleção");
+    h.get_by_label("Confirmar comando (Enter)");
+    let uid = h.state().session.state().unwrap().uid;
+    assert!(!free_eletrica::circuito::selecao_comando(uid).unwrap().comando.is_empty(), "a letra já vem pronta");
+    if let Ok(saida) = std::env::var("FREE_ELETRICA_PNG_COMANDO") {
+        h.render().unwrap().save(saida).unwrap();
+    }
+    h.get_by_label("Sair (ESC)").click();
+    h.run_steps(3);
+    assert!(h.state().session.running.is_none(), "Sair encerra o comando");
+    assert!(h.query_by_label("Comando atual:").is_none(), "a mini-barra some com o comando");
 
     // Tabela do quadro, unifilar e vista frontal: a mini-barra mostra o quadro que vai para a planta.
     for ferramenta in ["Tabela do quadro", "Diagrama unifilar", "Vista frontal do quadro"] {

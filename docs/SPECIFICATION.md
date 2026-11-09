@@ -75,6 +75,14 @@ O tipo de linha e a cor do perfil ficam na própria entidade do eletroduto. O di
 As configurações do Setup, incluindo PE compartilhado, FCA fixo, catálogos, perfis e tabelas de demanda próprias, ficam nas
 preferências do programa, não no DXF.
 
+### Letras de comando
+
+O `COMANDO` de um interruptor guarda um comando por tecla: `ab` são as teclas `a` e `b` (como sempre), e depois do `z`
+um comando é a mesma letra repetida (`aa`, `bbb`) ou letra e número (`a1`), separados por vírgula num interruptor de várias
+teclas (`aa,b`). A próxima letra olha todos os interruptores e luminárias do escopo das configurações (`escopoComandos`:
+`global` ou `porQuadro`; `sufixoComandos`: `letrasRepetidas` ou `letraNumero`). Gravar um comando (`editar::aplicar_comando`)
+tira a letra de quem a tinha no escopo e ficou fora da seleção: é assim que um comando existente é editado.
+
 ### Lista de materiais
 
 Os cabos são medidos condutor a condutor em cada trecho de eletroduto (planta e desníveis até os blocos), vezes a folga de
@@ -93,7 +101,7 @@ próprio `CommandSpec`.
 | Pontos | `eleponto`, `eletrica.ponto.modelo`, `eletrica.ponto.altura`, `eletrica.ponto.tensao`, `eletrica.ponto.demanda`, `eletrica.ponto.excluir`, `eletrica.blocos`, `eletrica.bootstrap` |
 | Famílias | `eletrica.familia.ler`, `.definir`, `.geometria`, `.atributos`, `elefamilia_conector` |
 | Atributos | `eletrica.atributos`, `eletrica.atributo.definir` |
-| Circuitos | `elecircuito`, `eleremoverponto`, `elecomando`, `eletrica.circuito.criar`, `.definir`, `.descrever`, `.juntar`, `.excluir`, `.alvo` |
+| Circuitos | `elecircuito`, `eleremoverponto`, `elecomando`, `eletrica.comando.selecao` (a mini-barra do ELECOMANDO), `eletrica.circuito.criar`, `.definir`, `.descrever`, `.juntar`, `.excluir`, `.alvo` |
 | Eletrodutos | `eleeletroduto`, `eletrica.eletroduto.modelo`, `.dividir`, `.definir`, `eletrica.eletrodutos` |
 | Cálculo | `eletrica.dimensionar` (com `unifilar` e `frontal`), `eletrica.diagnostico`, `eletrica.rotear`, `eletrica.sobrescrever`, `eletrica.quadro`, `eletrica.dr.definir`, `eletrica.dr.excluir`, `eletrica.quadro.equilibrar`, `eletrica.cargas`, `eletrica.demanda.tabelas`, `.salvar`, `.excluir`, `eletrica.setup` |
 | Documentação | `elefiacao` (com `ancora`: direto no eletroduto; com `tag` também: linha de chamada), `eletrica.fiacao.modo`, `eleregen`, `elequadro_tabela`, `eletrica.unifilar`, `eleunifilar`, `eletrica.quadro.frontal`, `elequadro_frontal`, `eletrica.documentacao.alvo` (o quadro ou rack da mini-barra), `elelegenda`, `eletrica.materiais`, `elemateriais_tabela`, `eletrica.inspecionar`, `eletrica.analisar` |

@@ -210,13 +210,99 @@ fn agrupa_os_circuitos_por_quadro() {
 }
 
 #[test]
-fn proximo_circuito_e_proxima_letra() {
-    let d = planta();
+fn proximo_circuito_e_proximo_comando() {
+    use setup::{EscopoComandos as E, SufixoComandos as S};
+    let mut d = planta();
     let a = analisar(&d);
     let qd = quadro(&d);
+    let global = Setup::default();
     assert_eq!(circuito::proximo_circuito(&a.pontos, qd), "4");
-    assert_eq!(circuito::proxima_letra(&a.pontos, Some(qd), Some("1")), "b");
-    assert_eq!(circuito::proxima_letra(&a.pontos, Some(qd), Some("2")), "a");
+    // Um contador só, de todos os interruptores e luminárias: o "a" do circuito 1 vale para o projeto inteiro.
+    assert_eq!(circuito::proximo_comando(&a.pontos, Some(qd), &global), "b");
+    // Três simples (a, b, c) e depois um paralelo: o paralelo recebe "d", não volta para "a".
+    let sw = |d: &mut Drawing, x: f64, tipo: &str, c: &str| {
+        inserir(d, "INT", x, 9.0, &[("TIPO_PONTO", "INTERRUPTOR"), ("TIPO_INTERRUPTOR", tipo), ("COMANDO", c), ("CIRCUITO", "1")])
+    };
+    sw(&mut d, 1.0, "SIMPLES", "b");
+    sw(&mut d, 2.0, "SIMPLES", "c");
+    let par = sw(&mut d, 3.0, "PARALELO", "");
+    assert_eq!(circuito::proximo_comando(&analisar(&d).pontos, Some(qd), &global), "d");
+    editar::definir_comando(&mut d, par, "d").unwrap();
+    assert_eq!(circuito::proximo_comando(&analisar(&d).pontos, Some(qd), &global), "e");
+    // Por quadro, a sequência recomeça em cada quadro.
+    let mut dois = metros();
+    let q1 = inserir(&mut dois, "QD1", 0.0, 0.0, &[("TIPO_PONTO", "QUADRO"), ("TAG", "QD-01")]);
+    let q2 = inserir(&mut dois, "QD2", 30.0, 0.0, &[("TIPO_PONTO", "QUADRO"), ("TAG", "QD-02")]);
+    for (x, q, c) in [(1.0, "QD-01", "a"), (2.0, "QD-01", "b"), (31.0, "QD-02", "a")] {
+        inserir(&mut dois, "L", x, 3.0, &[("TIPO_PONTO", "ILUM"), ("CIRCUITO", "1"), ("QUADRO", q), ("COMANDO", c)]);
+    }
+    let por_quadro = Setup { escopo_comandos: E::PorQuadro, ..Setup::default() };
+    let pts = analisar(&dois).pontos;
+    assert_eq!(circuito::proximo_comando(&pts, Some(q1), &por_quadro), "c");
+    assert_eq!(circuito::proximo_comando(&pts, Some(q2), &por_quadro), "b");
+    assert_eq!(circuito::proximo_comando(&pts, Some(q2), &global), "c", "global não repete");
+    // Depois do z: letras repetidas (o padrão) ou letra e número.
+    assert_eq!((0..30).map(|i| circuito::nome_do_comando(i, S::LetrasRepetidas)).skip(24).collect::<Vec<_>>(), ["y", "z", "aa", "bb", "cc", "dd"]);
+    assert_eq!(circuito::nome_do_comando(26 + 26, S::LetrasRepetidas), "aaa");
+    assert_eq!([26, 27, 51, 52].map(|i| circuito::nome_do_comando(i, S::LetraNumero)), ["a1".to_string(), "b1".into(), "z1".into(), "a2".into()]);
+    // Com todas as 26 letras em uso, o próximo é o primeiro depois do z.
+    let mut cheio = metros();
+    for (i, l) in ('a'..='z').enumerate() {
+        inserir(&mut cheio, "L", i as f64, 0.0, &[("TIPO_PONTO", "ILUM"), ("COMANDO", &l.to_string())]);
+    }
+    let pts = analisar(&cheio).pontos;
+    assert_eq!(circuito::proximo_comando(&pts, None, &global), "aa");
+    assert_eq!(circuito::proximo_comando(&pts, None, &Setup { sufixo_comandos: S::LetraNumero, ..Setup::default() }), "a1");
+    // A leitura do COMANDO: "ab" são duas teclas (como sempre), "aa" e "a1" um comando só.
+    let l = |t: &str| fiacao::letras(t);
+    assert_eq!(l("ab"), ["a", "b"]);
+    assert_eq!(l("a, b"), ["a", "b"]);
+    assert_eq!(l("aa"), ["aa"]);
+    assert_eq!(l("A1"), ["a1"]);
+    assert_eq!(l("aa,b1"), ["aa", "b1"]);
+    assert_eq!(l("c12"), ["c12"]);
+    assert!(l("").is_empty() && l("12").is_empty());
+    assert_eq!(fiacao::juntar_letras(&["a".into(), "b".into()]), "ab");
+    assert_eq!(fiacao::juntar_letras(&["aa".into(), "b".into()]), "aa,b");
+    assert_eq!(circuito::comando_com_letra("aa", "b1", 2), "aa,b1");
+}
+
+#[test]
+fn aplicar_comando_deduz_o_esquema_e_edita_o_comando() {
+    use editar::PapelInterruptor as P;
+    let setup = Setup::default();
+    let mut d = planta();
+    let qd = quadro(&d);
+    let sw =
+        |d: &mut Drawing, x: f64| inserir(d, "INT", x, 9.0, &[("TIPO_PONTO", "INTERRUPTOR"), ("TIPO_INTERRUPTOR", "SIMPLES"), ("POTENCIA", "0W")]);
+    let (s1, s2, s3) = (sw(&mut d, 1.0), sw(&mut d, 2.0), sw(&mut d, 3.0));
+    let luz = inserir(&mut d, "L", 5.0, 9.0, &[("TIPO_PONTO", "ILUM"), ("POTENCIA", "100VA"), ("CIRCUITO", "1"), ("QUADRO", "QD-01")]);
+    let papeis = |r: &editar::ComandoAplicado| r.papeis.iter().map(|(_, p)| *p).collect::<Vec<_>>();
+    // Um interruptor: simples.
+    let r = editar::aplicar_comando(&mut d, &setup, "b", &[s1], &[luz]).unwrap();
+    assert_eq!(papeis(&r), [P::Simples]);
+    // Dois: paralelos, na ordem dos cliques; todos no circuito da luminária.
+    let r = editar::aplicar_comando(&mut d, &setup, "b", &[s2, s1], &[luz]).unwrap();
+    assert_eq!(r.papeis, [(s2.hex(), P::InicioParalelo), (s1.hex(), P::FimParalelo)]);
+    assert_eq!((r.circuito.as_deref(), r.quadro), (Some("1"), Some(qd)));
+    // Três: paralelos nas pontas e o do meio intermediário, mesmo sendo bloco de simples.
+    let r = editar::aplicar_comando(&mut d, &setup, "b", &[s1, s3, s2], &[luz]).unwrap();
+    assert_eq!(papeis(&r), [P::InicioParalelo, P::Intermediario, P::FimParalelo]);
+    let pt = |d: &Drawing, h| ponto::ler_ponto(d, h).unwrap();
+    assert!([s1, s2, s3].iter().all(|h| pt(&d, *h).comando.as_deref() == Some("b") && pt(&d, *h).circuito.as_deref() == Some("1")));
+    // Editar: quem ficou de fora perde a letra e os vínculos dela.
+    let r = editar::aplicar_comando(&mut d, &setup, "b", &[s1, s2], &[luz]).unwrap();
+    assert_eq!(r.retirados, 1);
+    assert_eq!(pt(&d, s3).comando.as_deref().unwrap_or(""), "");
+    assert!(!pt(&d, s3).extras.iter().any(|(k, _)| k.ends_with(".b")), "{:?}", pt(&d, s3).extras);
+    // Um comando depois do z.
+    editar::aplicar_comando(&mut d, &setup, "aa", &[s3], &[]).unwrap();
+    assert_eq!(pt(&d, s3).comando.as_deref(), Some("aa"));
+    // Entrada ruim não grava nada.
+    assert!(editar::aplicar_comando(&mut d, &setup, "", &[s1], &[]).is_err());
+    assert!(editar::aplicar_comando(&mut d, &setup, "a", &[], &[luz]).is_err());
+    assert!(editar::aplicar_comando(&mut d, &setup, "a", &[luz], &[]).is_err());
+    assert!(editar::aplicar_comando(&mut d, &setup, "a", &[s1], &[s2]).is_err());
 }
 
 #[test]
@@ -1755,7 +1841,7 @@ fn novos_nomes_do_xdata_e_vinculo_do_comando() {
     let sw = a.pontos.iter().find(|p| p.tipo == TipoPonto::Interruptor).unwrap().handle;
     editar::definir_comando(&mut d, sw, "ab").unwrap();
     let qd = quadro(&d);
-    assert_eq!(circuito::proxima_letra(&analisar(&d).pontos, Some(qd), Some("1")), "c");
+    assert_eq!(circuito::proximo_comando(&analisar(&d).pontos, Some(qd), &Setup::default()), "c");
     // Remover do circuito.
     assert_eq!(editar::remover_do_circuito(&mut d, &[sw]).unwrap(), 1);
     assert_eq!(ponto::ler_ponto(&d, sw).unwrap().circuito, None);
@@ -3601,6 +3687,8 @@ fn diagrama_unifilar_com_entrada_barra_dr_e_reservas() {
     for v in ["PAINEL:", "POT. INSTALADA:", "POT. DEMANDADA:", "3P In: ", "Curva C", "IN: ", "1 - Sala", "POT: ", "FASE: "] {
         assert!(tem(v), "falta {v}: {textos:?}");
     }
+    // O geral com os polos, a corrente e a curva numa linha só (embaixo dele fica o texto do DPS).
+    assert!(textos.iter().any(|(t, ..)| t.starts_with("3P In: ") && t.ends_with(" A Curva C")), "{textos:?}");
     // O DR com a sensibilidade dele; o DPS com Uc e Imax.
     assert!(textos.iter().any(|(t, ..)| t.starts_with("IN: ") && t.ends_with("A / 30mA")), "{textos:?}");
     assert!(tem("275 V / 20 kA"));

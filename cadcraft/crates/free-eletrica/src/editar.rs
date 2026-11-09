@@ -587,6 +587,126 @@ pub fn vincular_interruptores(
     Ok(papeis)
 }
 
+/// O que [`aplicar_comando`] fez.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComandoAplicado {
+    pub comando: String,
+    /// O circuito e o quadro do comando, quando algum dos pontos tinha.
+    pub circuito: Option<String>,
+    #[serde(serialize_with = "hex_opcional")]
+    pub quadro: Option<Handle>,
+    pub papeis: Vec<(String, PapelInterruptor)>,
+    pub luminarias: usize,
+    /// Pontos que saíram do comando (editando um que já existia).
+    pub retirados: usize,
+    pub avisos: Vec<String>,
+}
+
+fn hex_opcional<S: serde::Serializer>(h: &Option<Handle>, s: S) -> Result<S::Ok, S::Error> {
+    match h {
+        Some(h) => s.serialize_str(&h.hex()),
+        None => s.serialize_none(),
+    }
+}
+
+/// Grava o comando `comando` nos interruptores e luminárias dados, como um grupo só: os interruptores na ordem
+/// dada viram simples (um), paralelos (dois) ou paralelos nas pontas e intermediários no meio (três ou mais);
+/// todos ficam no circuito do primeiro interruptor que tiver um (ou da primeira luminária); os vínculos e os
+/// papéis vão para o XDATA. Os pontos do escopo que tinham este comando e ficaram de fora o perdem: assim um
+/// comando existente é editado.
+pub fn aplicar_comando(
+    doc: &mut Drawing,
+    setup: &crate::setup::Setup,
+    comando: &str,
+    interruptores: &[Handle],
+    luminarias: &[Handle],
+) -> Result<ComandoAplicado, String> {
+    let id = match crate::fiacao::letras(comando).as_slice() {
+        [um] => um.clone(),
+        [] => return Err("informe o comando (a, b, c... aa, a1...)".into()),
+        _ => return Err(format!("\"{comando}\" tem mais de um comando: informe um só")),
+    };
+    if interruptores.is_empty() {
+        return Err("selecione ao menos um interruptor".into());
+    }
+    let analise = crate::analisar(doc);
+    for h in interruptores {
+        if !analise.ponto(*h).is_some_and(|p| p.tipo == crate::TipoPonto::Interruptor) {
+            return Err(format!("o objeto {} não é um interruptor", h.hex()));
+        }
+    }
+    for h in luminarias {
+        if !analise.ponto(*h).is_some_and(|p| p.tipo == crate::TipoPonto::Iluminacao) {
+            return Err(format!("o objeto {} não é uma luminária", h.hex()));
+        }
+    }
+    let mut avisos = Vec::new();
+    // O circuito do comando: o do primeiro interruptor que tiver, ou o da primeira luminária.
+    let referencia = interruptores.iter().chain(luminarias).filter_map(|h| analise.ponto(*h)).find_map(|p| p.quadro.zip(p.circuito.clone()));
+    // Quem tinha o comando e ficou de fora o perde.
+    let quadro_do_escopo = referencia.as_ref().map(|(q, _)| *q);
+    let membros: Vec<Handle> = interruptores.iter().chain(luminarias).copied().collect();
+    let mut retirados = 0;
+    let de_fora: Vec<(Handle, String)> = analise
+        .pontos
+        .iter()
+        .filter(|p| matches!(p.tipo, crate::TipoPonto::Interruptor | crate::TipoPonto::Iluminacao) && !membros.contains(&p.handle))
+        .filter(|p| setup.escopo_comandos == crate::setup::EscopoComandos::Global || p.quadro == quadro_do_escopo)
+        .filter_map(|p| p.comando.clone().map(|c| (p.handle, c)))
+        .filter(|(_, c)| crate::fiacao::letras(c).contains(&id))
+        .collect();
+    for (h, c) in de_fora {
+        let resto: Vec<String> = crate::fiacao::letras(&c).into_iter().filter(|l| *l != id).collect();
+        definir_comando(doc, h, &crate::fiacao::juntar_letras(&resto))?;
+        for chave in ["target_handles", CHAVE_INTERRUPTORES, CHAVE_PAPEL_INTERRUPTOR] {
+            gravar_xdata(doc, h, &format!("{chave}.{id}"), None)?;
+        }
+        retirados += 1;
+    }
+    // A letra em cada um: o interruptor de várias teclas guarda as outras.
+    for h in interruptores {
+        let p = ler_ponto(doc, *h).ok_or("interruptor não encontrado")?;
+        let teclas = p.tipo_interruptor.map_or(1, |t| t.teclas());
+        let novo = crate::circuito::comando_com_letra(p.comando.as_deref().unwrap_or(""), &id, teclas);
+        if p.comando.as_deref() != Some(novo.as_str()) {
+            definir_comando(doc, *h, &novo)?;
+        }
+    }
+    for h in luminarias {
+        definir_comando(doc, *h, &id)?;
+    }
+    match &referencia {
+        Some((q, c)) => {
+            for h in &membros {
+                let p = ler_ponto(doc, *h).ok_or("ponto não encontrado")?;
+                if p.quadro != Some(*q) || !p.circuito.as_deref().is_some_and(|x| x.eq_ignore_ascii_case(c)) {
+                    atribuir_circuito(doc, *h, *q, c)?;
+                }
+            }
+        }
+        None => avisos.push("interruptores e luminárias ainda sem circuito: use Criar circuito".into()),
+    }
+    // As luminárias de cada interruptor e os papéis no esquema.
+    let lista = luminarias.iter().map(|h| h.hex()).collect::<Vec<_>>().join(",");
+    for h in interruptores {
+        gravar_xdata(doc, *h, &format!("target_handles.{id}"), Some(&lista).filter(|l| !l.is_empty()).map(String::as_str))?;
+    }
+    let papeis = vincular_interruptores(doc, &id, interruptores, luminarias)?;
+    if luminarias.is_empty() {
+        avisos.push(format!("comando {id} sem luminária"));
+    }
+    Ok(ComandoAplicado {
+        comando: id,
+        circuito: referencia.as_ref().map(|(_, c)| c.clone()),
+        quadro: quadro_do_escopo,
+        papeis: papeis.into_iter().map(|(h, p)| (h.hex(), p)).collect(),
+        luminarias: luminarias.len(),
+        retirados,
+        avisos,
+    })
+}
+
 /// Descrição do circuito no quadro de cargas (`None` apaga). Um circuito descrito existe no
 /// quadro mesmo sem pontos.
 pub fn definir_descricao(doc: &mut Drawing, quadro: Handle, circuito: &str, descricao: Option<&str>) -> Result<(), String> {

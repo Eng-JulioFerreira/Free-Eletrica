@@ -36,8 +36,10 @@ pub fn specs() -> Vec<CommandSpec> {
             .interactive(|_| Ok(Box::new(CircuitoM::default()))),
         CommandSpec::new("eleremoverponto", "Remove Points from Circuit", run_remover).params("{pontos: [hex]} → {removidos}").interactive(|_| Ok(Box::new(RemoverM::default()))),
         CommandSpec::new("elecomando", "Switches and Lamps", run_comando)
-            .params("{interruptor: hex | interruptores: [hex] (three-way/four-way: the first gets the phase, the last feeds the lamps), luminarias: [hex], comando?: letter (default: the next free key of the switch)} → {comando, circuito, luminarias, interruptores: [{interruptor, papel}]}")
+            .params("{interruptor: hex | interruptores: [hex] (three-way/four-way: the first gets the phase, the last feeds the lamps), luminarias: [hex], comando?: a, b... aa, a1 (default: with every key used, the switch's last command; otherwise the next free one in the project, or in the board, as the settings say)} (switches and lamps of the scope that had the command and were left out lose it) → {comando, circuito, luminarias, interruptores: [{interruptor, papel}], avisos}")
             .interactive(|_| Ok(Box::new(ComandoM::default()))),
+        CommandSpec::new("eletrica.comando.selecao", "Switch Command Selection", run_comando_selecao)
+            .params("{comando?: text | null (a command in use loads its switches and lamps to edit; null: back to the next free one), adicionar?: [hex] (switches and lamps; a second time takes them out), limpar?: bool, confirmar?: bool (writes the command: 1 switch simple, 2 parallel, 3 or more parallel at the ends and intermediate in between)} → the command being built in ELECOMANDO, also while it runs (the mini-bar): {comando, manual, interruptores, luminarias, esquema, emUso, aplicado?}"),
         CommandSpec::new("elefiacao", "Wiring Tags", run_fiacao)
             .params("{quadro?: hex | TAG, eletrodutos?: [hex], limpar?: bool (erase the tags), ancora?: [x, y] (the point on the conduit), modo?: direct | leader (default: direct without `tag`, leader with it), tag?: [x, y] (leader: where the base line starts; the leader takes the angle of the two points), eletroduto?: hex (default: the conduit at `ancora`)} (default: every conduit, at its middle) → {tags, criadas, apagadas, tabelas, avisos} or {tag}")
             .interactive(|_| Ok(Box::new(FiacaoM::default()))),
@@ -1736,128 +1738,197 @@ impl Interactive for RemoverM {
     }
 }
 
-/// O interruptor escolhido em ELECOMANDO.
-struct Interruptor {
-    h: Handle,
-    rotulo: String,
-    letra: String,
-    /// O COMANDO antes da letra em uso: trocar a letra só troca a desta tecla.
-    anteriores: String,
-    teclas: usize,
-    circuito: Option<String>,
-    quadro: Option<Handle>,
-}
+// ---------------------------------------------------------------- comandos (ELECOMANDO)
 
-/// Lê o interruptor e dá uma letra à tecla em uso: a pedida, a próxima livre enquanto houver tecla
-/// sem letra, ou a última que ele tem.
-fn preparar_interruptor(s: &mut Session, h: Handle, letra: Option<&str>) -> Result<Option<Interruptor>> {
-    let a = analise(s)?;
-    let Some(p) = a.ponto(h).filter(|p| p.tipo == TipoPonto::Interruptor) else { return Ok(None) };
-    let teclas = p.tipo_interruptor.map_or(1, |t| t.teclas());
-    let atual = p.comando.clone().unwrap_or_default();
-    let tem = ele::fiacao::letras(&atual);
-    let escolhida = match letra {
-        Some(l) => l.trim().to_lowercase(),
-        None if tem.len() < teclas => ele::circuito::proxima_letra(&a.pontos, p.quadro, p.circuito.as_deref()),
-        None => tem.last().cloned().unwrap_or_else(|| "a".into()),
-    };
-    let comando = ele::circuito::comando_com_letra(&atual, &escolhida, teclas);
-    if p.comando.as_deref() != Some(comando.as_str()) {
-        ele::editar::definir_comando(s.doc_mut()?, h, &comando).map_err(erro)?;
+/// O comando em montagem no desenho, criado com o próximo livre quando ainda não existe.
+fn selecao_atual(s: &Session) -> Result<ele::circuito::SelecaoComando> {
+    let uid = s.state()?.uid;
+    if let Some(sel) = ele::circuito::selecao_comando(uid) {
+        return Ok(sel);
     }
-    Ok(Some(Interruptor { h, rotulo: p.rotulo(), letra: escolhida, anteriores: atual, teclas, circuito: p.circuito.clone(), quadro: p.quadro }))
+    let a = analise(s)?;
+    let mut sel = ele::circuito::SelecaoComando::default();
+    sel.comando = ele::circuito::proximo_comando(&a.pontos, ele::circuito::quadro_do_comando(&a, &sel), &ele::setup::atual());
+    Ok(sel)
 }
 
-/// Liga uma luminária ao interruptor: mesma letra e mesmo circuito, e o vínculo no XDATA. Se o
-/// interruptor ainda não tem circuito, ele fica com o da luminária.
-fn ligar_luminaria(s: &mut Session, sw: &mut Interruptor, h: Handle) -> Result<bool> {
-    let a = analise(s)?;
-    let Some(lum) = a.ponto(h).filter(|p| p.tipo == TipoPonto::Iluminacao).cloned() else {
-        s.echo("O objeto não é uma luminária (TIPO_PONTO = ILUM).");
-        return Ok(false);
+/// Guarda o comando em montagem; sem a letra escolhida à mão, ela acompanha o próximo livre do escopo.
+fn guardar_selecao(s: &Session, mut sel: ele::circuito::SelecaoComando) -> Result<ele::circuito::SelecaoComando> {
+    if !sel.manual {
+        let a = analise(s)?;
+        sel.comando = ele::circuito::proximo_comando(&a.pontos, ele::circuito::quadro_do_comando(&a, &sel), &ele::setup::atual());
+    }
+    ele::circuito::definir_selecao_comando(s.state()?.uid, Some(sel.clone()));
+    Ok(sel)
+}
+
+/// Escolhe a letra do comando. Uma letra já em uso traz os interruptores (na ordem dos retornos) e as
+/// luminárias dela, para editar o comando.
+fn escolher_letra(s: &Session, texto: &str) -> Result<ele::circuito::SelecaoComando> {
+    let mut sel = selecao_atual(s)?;
+    let id = match ele::fiacao::letras(texto).as_slice() {
+        [um] => um.clone(),
+        _ => return Err(erro(format!("\"{texto}\" não é um comando: use a, b, c... aa, a1..."))),
     };
-    ele::editar::definir_comando(s.doc_mut()?, h, &sw.letra).map_err(erro)?;
-    ele::editar::vincular_luminaria(s.doc_mut()?, sw.h, &sw.letra, h).map_err(erro)?;
-    match (&sw.circuito, sw.quadro, &lum.circuito, lum.quadro) {
-        (Some(c), Some(q), lc, lq) => {
-            if lc.as_deref() != Some(c.as_str()) || lq != Some(q) {
-                ele::editar::atribuir_circuito(s.doc_mut()?, h, q, c).map_err(erro)?;
+    let a = analise(s)?;
+    let setup = ele::setup::atual();
+    let quadro = ele::circuito::quadro_do_comando(&a, &sel);
+    if ele::circuito::comandos_em_uso(&a.pontos, quadro, setup.escopo_comandos).contains(&id) {
+        let no_escopo = |p: &&PontoEletrico| setup.escopo_comandos == ele::setup::EscopoComandos::Global || p.quadro == quadro;
+        let tem = |p: &&PontoEletrico| p.comando.as_deref().is_some_and(|c| ele::fiacao::letras(c).contains(&id));
+        let mut interruptores: Vec<&PontoEletrico> =
+            a.pontos.iter().filter(|p| p.tipo == TipoPonto::Interruptor).filter(no_escopo).filter(tem).collect();
+        interruptores.sort_by_key(|p| ele::editar::papel_do_interruptor(p, &id).map_or(0, |r| r.ordem()));
+        sel.interruptores = interruptores.iter().map(|p| p.handle).collect();
+        sel.luminarias = a.pontos.iter().filter(|p| p.tipo == TipoPonto::Iluminacao).filter(no_escopo).filter(tem).map(|p| p.handle).collect();
+    }
+    sel.comando = id;
+    sel.manual = true;
+    guardar_selecao(s, sel)
+}
+
+/// Põe (ou tira, num segundo clique) os interruptores e luminárias clicados no comando em montagem.
+fn clicar_no_comando(s: &mut Session, hs: &[Handle]) -> Result<()> {
+    let mut sel = selecao_atual(s)?;
+    let a = analise(s)?;
+    for h in hs {
+        let Some(p) = a.ponto(*h) else { continue };
+        let lista = match p.tipo {
+            TipoPonto::Interruptor => &mut sel.interruptores,
+            TipoPonto::Iluminacao => &mut sel.luminarias,
+            _ => {
+                s.echo(format!("{}: não é interruptor nem luminária.", p.rotulo()));
+                continue;
             }
+        };
+        if let Some(i) = lista.iter().position(|x| x == h) {
+            lista.remove(i);
+        } else {
+            lista.push(*h);
         }
-        (None, _, Some(c), Some(q)) => {
-            ele::editar::atribuir_circuito(s.doc_mut()?, sw.h, q, c).map_err(erro)?;
-            sw.circuito = Some(c.clone());
-            sw.quadro = Some(q);
-            s.echo(format!("{} entrou no circuito {c}.", sw.rotulo));
-        }
-        _ => s.echo("Interruptor e luminária ainda sem circuito: use Criar circuito."),
     }
-    s.echo(format!("{}: comando {}", lum.rotulo(), sw.letra));
-    Ok(true)
+    let sel = guardar_selecao(s, sel)?;
+    s.echo(format!(
+        "Comando {}: {} interruptor(es), {} luminária(s) ({}).",
+        sel.comando,
+        sel.interruptores.len(),
+        sel.luminarias.len(),
+        ele::circuito::esquema_do_comando(sel.interruptores.len())
+    ));
+    Ok(())
 }
 
-/// Põe outro interruptor no comando de `sw`: a mesma letra e o mesmo circuito (paralelos e intermediários).
-fn juntar_interruptor(s: &mut Session, sw: &Interruptor, h: Handle) -> Result<bool> {
-    if h == sw.h {
-        return Ok(false);
+/// Grava o comando em montagem e prepara o próximo, com a letra livre seguinte.
+fn confirmar_comando(s: &mut Session) -> Result<ele::editar::ComandoAplicado> {
+    let sel = selecao_atual(s)?;
+    let feito = ele::editar::aplicar_comando(s.doc_mut()?, &ele::setup::atual(), &sel.comando, &sel.interruptores, &sel.luminarias).map_err(erro)?;
+    s.echo(format!(
+        "Comando {}: {} interruptor(es) ({}), {} luminária(s).",
+        feito.comando,
+        feito.papeis.len(),
+        ele::circuito::esquema_do_comando(feito.papeis.len()),
+        feito.luminarias
+    ));
+    for a in &feito.avisos {
+        s.echo(a.clone());
     }
-    let Some(outro) = preparar_interruptor(s, h, Some(&sw.letra))? else { return Ok(false) };
-    if let (Some(c), Some(q)) = (&sw.circuito, sw.quadro)
-        && (outro.circuito.as_deref() != Some(c.as_str()) || outro.quadro != Some(q))
-    {
-        ele::editar::atribuir_circuito(s.doc_mut()?, h, q, c).map_err(erro)?;
-    }
-    s.echo(format!("Interruptor {}: comando {}.", outro.rotulo, sw.letra));
-    Ok(true)
+    ele::circuito::definir_selecao_comando(s.state()?.uid, None);
+    guardar_selecao(s, ele::circuito::SelecaoComando::default())?;
+    Ok(feito)
 }
 
-/// Grava os papéis dos interruptores do comando e a lista deles nas luminárias.
-fn vincular_comando(
-    s: &mut Session,
-    sw: &Interruptor,
-    outros: &[Handle],
-    luminarias: &[Handle],
-) -> Result<Vec<(Handle, ele::editar::PapelInterruptor)>> {
-    let todos: Vec<Handle> = std::iter::once(sw.h).chain(outros.iter().copied()).collect();
-    ele::editar::vincular_interruptores(s.doc_mut()?, &sw.letra, &todos, luminarias).map_err(erro)
+fn json_da_selecao(s: &Session, sel: &ele::circuito::SelecaoComando) -> Result<Value> {
+    let a = analise(s)?;
+    let em_uso = ele::circuito::comandos_em_uso(&a.pontos, ele::circuito::quadro_do_comando(&a, sel), ele::setup::atual().escopo_comandos);
+    let mut v = json_de(sel)?;
+    if let Value::Object(m) = &mut v {
+        m.insert("esquema".into(), json!(ele::circuito::esquema_do_comando(sel.interruptores.len())));
+        m.insert("emUso".into(), json!(em_uso));
+    }
+    Ok(v)
+}
+
+fn run_comando_selecao(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "eletrica.comando.selecao";
+    if p.get("limpar").and_then(Value::as_bool).unwrap_or(false) {
+        let mut sel = selecao_atual(s)?;
+        sel.interruptores.clear();
+        sel.luminarias.clear();
+        guardar_selecao(s, sel)?;
+    }
+    match p.get("comando") {
+        None => {}
+        Some(Value::Null) => {
+            let mut sel = selecao_atual(s)?;
+            sel.manual = false;
+            guardar_selecao(s, sel)?;
+        }
+        Some(Value::String(t)) => {
+            escolher_letra(s, t).map_err(|e| bad(CMD, e.to_string()))?;
+        }
+        Some(_) => return Err(bad(CMD, "`comando` must be text (a, b... aa, a1) or null (the next free one)")),
+    }
+    if let Some(v) = p.get("adicionar") {
+        let hs = v
+            .as_array()
+            .ok_or_else(|| bad(CMD, "`adicionar` must be [hex]"))?
+            .iter()
+            .map(|x| x.as_str().and_then(Handle::parse_hex).ok_or_else(|| bad(CMD, "`adicionar` must be [hex]")))
+            .collect::<Result<Vec<Handle>>>()?;
+        clicar_no_comando(s, &hs)?;
+    }
+    if p.get("confirmar").and_then(Value::as_bool).unwrap_or(false) {
+        let feito = confirmar_comando(s).map_err(|e| bad(CMD, e.to_string()))?;
+        let mut v = json_da_selecao(s, &selecao_atual(s)?)?;
+        if let Value::Object(m) = &mut v {
+            m.insert("aplicado".into(), json_de(&feito)?);
+        }
+        return Ok(v);
+    }
+    let sel = selecao_atual(s)?;
+    guardar_selecao(s, sel.clone())?;
+    json_da_selecao(s, &selecao_atual(s)?)
 }
 
 fn run_comando(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "elecomando";
     // Um interruptor, ou vários num mesmo comando (paralelos e intermediários).
-    let interruptores =
-        if p.get("interruptores").is_some() { handles("elecomando", p, "interruptores")? } else { vec![handle("elecomando", p, "interruptor")?] };
-    let Some((&h, outros)) = interruptores.split_first() else { return Err(bad("elecomando", "`interruptores` is empty")) };
-    let lista = handles("elecomando", p, "luminarias")?;
-    let letra = p.get("comando").and_then(Value::as_str).filter(|l| !l.trim().is_empty());
-    let mut sw =
-        preparar_interruptor(s, h, letra)?.ok_or_else(|| bad("elecomando", "`interruptor` is not a switch block (TIPO_PONTO = INTERRUPTOR)"))?;
-    let mut feitos = Vec::new();
-    let mut lums = Vec::new();
-    for l in lista {
-        if ligar_luminaria(s, &mut sw, l)? {
-            feitos.push(l.hex());
-            lums.push(l);
+    let interruptores = if p.get("interruptores").is_some() { handles(CMD, p, "interruptores")? } else { vec![handle(CMD, p, "interruptor")?] };
+    let Some(&primeiro) = interruptores.first() else { return Err(bad(CMD, "`interruptores` is empty")) };
+    let luminarias = handles(CMD, p, "luminarias")?;
+    let a = analise(s)?;
+    let sw = a
+        .ponto(primeiro)
+        .filter(|x| x.tipo == TipoPonto::Interruptor)
+        .ok_or_else(|| bad(CMD, "`interruptor` is not a switch block (TIPO_PONTO = INTERRUPTOR)"))?;
+    let comando = match p.get("comando").and_then(Value::as_str).filter(|l| !l.trim().is_empty()) {
+        Some(c) => c.trim().to_lowercase(),
+        None => {
+            // Sem a letra: com todas as teclas usadas, edita o último comando do interruptor; senão, o próximo livre.
+            let tem = sw.comando.as_deref().map(ele::fiacao::letras).unwrap_or_default();
+            let teclas = sw.tipo_interruptor.map_or(1, |t| t.teclas());
+            match tem.last() {
+                Some(l) if tem.len() >= teclas => l.clone(),
+                _ => {
+                    let quadro = interruptores.iter().chain(&luminarias).filter_map(|h| a.ponto(*h)).find_map(|x| x.quadro);
+                    ele::circuito::proximo_comando(&a.pontos, quadro, &ele::setup::atual())
+                }
+            }
         }
-    }
-    let mut juntos = Vec::new();
-    for o in outros {
-        if !juntar_interruptor(s, &sw, *o)? {
-            return Err(bad("elecomando", format!("{} is not another switch block (TIPO_PONTO = INTERRUPTOR)", o.hex())));
-        }
-        juntos.push(*o);
-    }
-    let papeis = vincular_comando(s, &sw, &juntos, &lums)?;
-    let papeis: Vec<Value> = papeis.iter().map(|(h, r)| json!({ "interruptor": h.hex(), "papel": r.codigo() })).collect();
-    Ok(json!({ "comando": sw.letra, "circuito": sw.circuito, "luminarias": feitos, "interruptores": papeis }))
+    };
+    let feito = ele::editar::aplicar_comando(s.doc_mut()?, &ele::setup::atual(), &comando, &interruptores, &luminarias).map_err(|e| bad(CMD, e))?;
+    let papeis: Vec<Value> = feito.papeis.iter().map(|(h, r)| json!({ "interruptor": h, "papel": r.codigo() })).collect();
+    let lums: Vec<String> = luminarias.iter().map(|h| h.hex()).collect();
+    Ok(json!({ "comando": feito.comando, "circuito": feito.circuito, "luminarias": lums, "interruptores": papeis, "avisos": feito.avisos }))
 }
 
+/// ELECOMANDO: a letra vem pronta (a próxima livre) e a mini-barra mostra o que foi clicado. Interruptores e
+/// luminárias entram no mesmo comando em qualquer ordem; um segundo clique tira. Enter grava (um interruptor:
+/// simples; dois: paralelos; três ou mais: paralelos nas pontas e intermediários no meio) e já prepara o
+/// próximo comando. Enter sem nada clicado, ou Esc, sai. `Letra` escolhe outra letra; uma em uso abre o
+/// comando dela para editar.
 #[derive(Default)]
 struct ComandoM {
-    interruptor: Option<Interruptor>,
-    /// Os outros interruptores do mesmo comando (paralelos e intermediários), na ordem escolhida.
-    outros: Vec<Handle>,
-    luminarias: Vec<Handle>,
-    feitos: usize,
     pedindo_letra: bool,
 }
 
@@ -1868,75 +1939,66 @@ impl Interactive for ComandoM {
     fn begin(&mut self, s: &mut Session) -> Result<Step> {
         s.set_selection(Vec::new());
         preparar(s)?;
+        ele::circuito::definir_selecao_comando(s.state()?.uid, None);
+        guardar_selecao(s, ele::circuito::SelecaoComando::default())?;
         Ok(Step::Continue)
     }
-    fn prompt(&self, _s: &Session) -> Prompt {
+    fn prompt(&self, s: &Session) -> Prompt {
         if self.pedindo_letra {
             return Prompt::new("Letra do comando", Accept::TEXT);
         }
-        match &self.interruptor {
-            None => Prompt::new("Selecione o interruptor", Accept::SELECT),
-            Some(sw) => Prompt::new(
-                format!("Selecione as luminárias e os outros interruptores (paralelos, intermediários) do comando {}", sw.letra),
-                Accept::SELECT,
-            )
-            .kw(&["Letra"]),
-        }
+        let sel = s.state().ok().and_then(|st| ele::circuito::selecao_comando(st.uid)).unwrap_or_default();
+        Prompt::new(
+            format!(
+                "Comando {}: clique nos interruptores e nas luminárias ({} e {} até agora; Enter confirma, Esc sai)",
+                sel.comando,
+                sel.interruptores.len(),
+                sel.luminarias.len()
+            ),
+            Accept::SELECT,
+        )
+        .kw(&["Letra"])
     }
     fn input(&mut self, s: &mut Session, i: Input) -> Result<Step> {
         if self.pedindo_letra {
             self.pedindo_letra = false;
-            if let (Input::Text(t) | Input::Keyword(t), Some(sw)) = (&i, &mut self.interruptor)
-                && let [letra] = ele::fiacao::letras(t).as_slice()
+            if let Input::Text(t) | Input::Keyword(t) = &i
+                && let Err(e) = escolher_letra(s, t)
             {
-                let comando = ele::circuito::comando_com_letra(&sw.anteriores, letra, sw.teclas);
-                ele::editar::definir_comando(s.doc_mut()?, sw.h, &comando).map_err(erro)?;
-                sw.letra = letra.clone();
+                s.echo(e.to_string());
             }
             return Ok(Step::Continue);
         }
+        let terminar = |s: &mut Session| -> Result<Step> {
+            ele::circuito::definir_selecao_comando(s.state()?.uid, None);
+            Ok(Step::Done)
+        };
         match i {
-            Input::Cancel => Ok(Step::Done),
-            Input::Keyword(k) | Input::Text(k) if self.interruptor.is_some() && k.trim().eq_ignore_ascii_case("letra") => {
+            Input::Cancel => terminar(s),
+            Input::Keyword(k) | Input::Text(k) if k.trim().eq_ignore_ascii_case("letra") => {
                 self.pedindo_letra = true;
+                Ok(Step::Continue)
+            }
+            Input::Keyword(k) | Input::Text(k) => {
+                if let Err(e) = escolher_letra(s, &k) {
+                    s.echo(e.to_string());
+                }
                 Ok(Step::Continue)
             }
             Input::Pick(hs) => {
                 s.set_selection(Vec::new());
-                match &mut self.interruptor {
-                    None => {
-                        for h in hs {
-                            if let Some(sw) = preparar_interruptor(s, h, None)? {
-                                s.echo(format!("Interruptor {}: comando {}.", sw.rotulo, sw.letra));
-                                self.interruptor = Some(sw);
-                                return Ok(Step::Continue);
-                            }
-                        }
-                        s.echo("Selecione um interruptor (TIPO_PONTO = INTERRUPTOR).");
-                    }
-                    Some(sw) => {
-                        for h in hs {
-                            // Outro interruptor entra no mesmo comando: paralelos e intermediários.
-                            let e_interruptor = analise(s)?.ponto(h).is_some_and(|p| p.tipo == TipoPonto::Interruptor);
-                            if e_interruptor {
-                                if !self.outros.contains(&h) && juntar_interruptor(s, sw, h)? {
-                                    self.outros.push(h);
-                                }
-                            } else if ligar_luminaria(s, sw, h)? {
-                                self.feitos += 1;
-                                self.luminarias.push(h);
-                            }
-                        }
-                        vincular_comando(s, sw, &self.outros, &self.luminarias)?;
-                    }
-                }
+                clicar_no_comando(s, &hs)?;
                 Ok(Step::Continue)
             }
             Input::Enter => {
-                if let Some(sw) = &self.interruptor {
-                    s.echo(format!("{} luminária(s) no comando {}.", self.feitos, sw.letra));
+                let sel = selecao_atual(s)?;
+                if sel.interruptores.is_empty() && sel.luminarias.is_empty() {
+                    return terminar(s);
                 }
-                Ok(Step::Done)
+                if let Err(e) = confirmar_comando(s) {
+                    s.echo(e.to_string());
+                }
+                Ok(Step::Continue)
             }
             _ => Ok(Step::Continue),
         }

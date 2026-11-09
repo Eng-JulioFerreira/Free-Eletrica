@@ -804,6 +804,75 @@ fn comando_usa_as_teclas_do_interruptor_e_grava_o_vinculo() {
 }
 
 #[test]
+fn elecomando_continuo_sem_repetir_letra_e_pela_mini_barra() {
+    let _setup = trava_setup();
+    let mut s = Session::new();
+    let mut d = Drawing::new_metric();
+    d.header.set_i64("INSUNITS", 6);
+    let qd = inserir(&mut d, "QDG", 0.0, 0.0, &[("TIPO_PONTO", "QUADRO"), ("TAG", "QDG"), ("ALTURA", "1,5")]);
+    let sw = |d: &mut Drawing, x: f64, tipo: &str| {
+        inserir(d, "INT", x, 0.0, &[("TIPO_PONTO", "INTERRUPTOR"), ("TIPO_INTERRUPTOR", tipo), ("POTENCIA", "0W"), ("ALTURA", "1,10")])
+    };
+    let (s1, s2, s3) = (sw(&mut d, 1.0, "SIMPLES"), sw(&mut d, 2.0, "SIMPLES"), sw(&mut d, 3.0, "SIMPLES"));
+    let (p1, p2) = (sw(&mut d, 4.0, "PARALELO"), sw(&mut d, 5.0, "PARALELO"));
+    let luzes: Vec<Handle> =
+        (0..5).map(|i| inserir(&mut d, "ILU-OCT", f64::from(i), 3.0, &[("TIPO_PONTO", "ILUM"), ("POTENCIA", "100VA"), ("COMANDO", "")])).collect();
+    s.open_drawing(d, "Comandos", None);
+    let hexes: Vec<String> = luzes.iter().map(|h| h.hex()).collect();
+    s.execute("elecircuito", &json!({ "quadro": qd.hex(), "circuito": "1", "pontos": hexes })).unwrap();
+    let ler = |s: &Session, h: Handle| free_eletrica::ponto::ler_ponto(s.doc().unwrap(), h).unwrap();
+    let selecao = |s: &mut Session, p: Value| s.execute("eletrica.comando.selecao", &p).unwrap();
+
+    // Três simples seguidos: a, b, c, com o comando correndo o tempo todo.
+    s.start("elecomando").unwrap();
+    for (i, (h, l)) in [(s1, luzes[0]), (s2, luzes[1]), (s3, luzes[2])].into_iter().enumerate() {
+        s.input(Input::Pick(vec![h])).unwrap();
+        s.input(Input::Pick(vec![l])).unwrap();
+        s.input(Input::Enter).unwrap();
+        assert!(s.running.is_some(), "o comando continua para o próximo");
+        assert_eq!(ler(&s, h).comando.as_deref(), Some(["a", "b", "c"][i]));
+    }
+    // Depois, o paralelo pega o "d", não volta para o "a"; a ordem dos cliques é livre (a luz antes).
+    assert_eq!(selecao(&mut s, json!({}))["comando"], "d");
+    s.input(Input::Pick(vec![luzes[3]])).unwrap();
+    s.input(Input::Pick(vec![p1])).unwrap();
+    s.input(Input::Pick(vec![p2])).unwrap();
+    let v = selecao(&mut s, json!({}));
+    assert_eq!((v["interruptores"].as_array().unwrap().len(), v["luminarias"].as_array().unwrap().len()), (2, 1));
+    assert!(v["esquema"].as_str().unwrap().starts_with("Paralelo"), "{v}");
+    s.input(Input::Enter).unwrap();
+    for (h, papel) in [(p1, "ParallelStart"), (p2, "ParallelEnd")] {
+        let p = ler(&s, h);
+        assert_eq!(p.comando.as_deref(), Some("d"));
+        assert!(p.extras.iter().any(|(k, v)| k == "switch_role.d" && v == papel), "{:?}", p.extras);
+    }
+    assert_eq!(selecao(&mut s, json!({}))["comando"], "e", "a mini-barra já mostra o próximo livre");
+    // Um segundo clique tira da seleção.
+    s.input(Input::Pick(vec![luzes[4]])).unwrap();
+    s.input(Input::Pick(vec![luzes[4]])).unwrap();
+    assert!(selecao(&mut s, json!({}))["luminarias"].as_array().unwrap().is_empty());
+    // Escolher um comando em uso o abre para editar; confirmar pela mini-barra grava.
+    let v = selecao(&mut s, json!({ "comando": "B" }));
+    assert_eq!((v["comando"].as_str(), v["manual"].as_bool()), (Some("b"), Some(true)));
+    assert_eq!(v["interruptores"], json!([s2.hex()]));
+    assert_eq!(v["luminarias"], json!([luzes[1].hex()]));
+    let v = selecao(&mut s, json!({ "adicionar": [luzes[4].hex()], "confirmar": true }));
+    assert_eq!(v["aplicado"]["comando"], "b");
+    assert_eq!(ler(&s, luzes[4]).comando.as_deref(), Some("b"));
+    assert_eq!((v["comando"].as_str(), v["manual"].as_bool()), (Some("e"), Some(false)));
+    // Limpar a seleção; Enter sem nada selecionado sai.
+    s.input(Input::Pick(vec![s1])).unwrap();
+    assert!(selecao(&mut s, json!({ "limpar": true }))["interruptores"].as_array().unwrap().is_empty());
+    s.input(Input::Enter).unwrap();
+    assert!(s.running.is_none());
+    // Confirmar sem interruptor é recusado; entrada ruim também.
+    assert!(s.execute("eletrica.comando.selecao", &json!({ "confirmar": true })).is_err());
+    for ruim in [json!({ "comando": 5 }), json!({ "comando": "a b" }), json!({ "adicionar": "x" }), json!({ "adicionar": ["ZZ"] })] {
+        assert!(s.execute("eletrica.comando.selecao", &ruim).is_err(), "{ruim}");
+    }
+}
+
+#[test]
 fn paralelos_e_intermediario_no_mesmo_comando_e_os_retornos() {
     let _setup = trava_setup();
     let mut s = Session::new();

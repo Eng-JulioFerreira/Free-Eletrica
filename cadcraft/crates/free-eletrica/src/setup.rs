@@ -213,6 +213,51 @@ impl CorProtecao {
     }
 }
 
+/// Onde a sequência de comandos (`a`, `b`, `c`...) não repete.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum EscopoComandos {
+    /// Nunca repete no projeto inteiro.
+    #[default]
+    Global,
+    /// Recomeça em `a` em cada quadro.
+    PorQuadro,
+}
+
+impl EscopoComandos {
+    pub const TODOS: [EscopoComandos; 2] = [Self::Global, Self::PorQuadro];
+
+    pub fn nome(self) -> &'static str {
+        match self {
+            Self::Global => "Global no projeto",
+            Self::PorQuadro => "Por quadro",
+        }
+    }
+}
+
+/// Os comandos depois do `z`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SufixoComandos {
+    /// `aa`, `bb`... `zz`, depois `aaa`: a letra repetida nunca se confunde com um interruptor de duas teclas
+    /// (`ab` é a tecla `a` e a tecla `b`).
+    #[default]
+    LetrasRepetidas,
+    /// `a1`, `b1`... `z1`, depois `a2`.
+    LetraNumero,
+}
+
+impl SufixoComandos {
+    pub const TODOS: [SufixoComandos; 2] = [Self::LetrasRepetidas, Self::LetraNumero];
+
+    pub fn nome(self) -> &'static str {
+        match self {
+            Self::LetrasRepetidas => "Repetir letras (aa, bb, cc...)",
+            Self::LetraNumero => "Letra + número (a1, b1, c1...)",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum CategoriaTelecom {
@@ -540,6 +585,9 @@ pub struct Setup {
     pub cor_retorno: CorCabo,
     /// A cor do condutor de proteção (o neutro é sempre azul-claro).
     pub cor_protecao: CorProtecao,
+    /// A sequência das letras de comando: onde não repete e o que vem depois do `z`.
+    pub escopo_comandos: EscopoComandos,
+    pub sufixo_comandos: SufixoComandos,
     pub unidade: Unidade,
     /// Camadas dos eletrodutos, separadas por vírgula, com curingas `*` e `?`.
     pub camadas_eletroduto: String,
@@ -605,6 +653,8 @@ impl Setup {
             cores_fase: [CorCabo::Vermelho, CorCabo::Branco, CorCabo::Marrom],
             cor_retorno: CorCabo::Amarelo,
             cor_protecao: CorProtecao::Verde,
+            escopo_comandos: EscopoComandos::Global,
+            sufixo_comandos: SufixoComandos::LetrasRepetidas,
             unidade: Unidade::default(),
             camadas_eletroduto: "*ELETRODUTO*".into(),
             camadas_piso: "*PISO*".into(),

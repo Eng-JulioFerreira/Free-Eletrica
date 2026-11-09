@@ -77,16 +77,50 @@ pub fn agrupar(pontos: &[PontoEletrico]) -> Vec<Circuito> {
         .collect()
 }
 
-/// A próxima letra de comando livre num circuito: "a", "b"... (as letras dos interruptores e
-/// luminárias dele).
-pub fn proxima_letra(pontos: &[PontoEletrico], quadro: Option<Handle>, circuito: Option<&str>) -> String {
-    let usadas: Vec<String> = pontos
+/// O `i`-ésimo comando da sequência (0 é `a`): `a`...`z` e, depois do `z`, as letras repetidas (`aa`...`zz`,
+/// `aaa`...) ou letra e número (`a1`...`z1`, `a2`...).
+pub fn nome_do_comando(i: usize, sufixo: crate::setup::SufixoComandos) -> String {
+    let letra = |k: usize| char::from(b'a' + u8::try_from(k % 26).unwrap_or(0));
+    if i < 26 {
+        return letra(i).to_string();
+    }
+    let k = i - 26;
+    match sufixo {
+        crate::setup::SufixoComandos::LetrasRepetidas => letra(k).to_string().repeat(k / 26 + 2),
+        crate::setup::SufixoComandos::LetraNumero => format!("{}{}", letra(k), k / 26 + 1),
+    }
+}
+
+/// Os comandos em uso pelos interruptores e luminárias do escopo: o projeto inteiro ou o quadro `quadro`.
+pub fn comandos_em_uso(pontos: &[PontoEletrico], quadro: Option<Handle>, escopo: crate::setup::EscopoComandos) -> Vec<String> {
+    let mut v: Vec<String> = pontos
         .iter()
-        .filter(|p| p.quadro == quadro && circuito.is_some_and(|c| p.circuito.as_deref().is_some_and(|pc| pc.eq_ignore_ascii_case(c))))
+        .filter(|p| matches!(p.tipo, TipoPonto::Interruptor | TipoPonto::Iluminacao))
+        .filter(|p| escopo == crate::setup::EscopoComandos::Global || p.quadro == quadro)
         .filter_map(|p| p.comando.as_deref())
         .flat_map(crate::fiacao::letras)
         .collect();
-    ('a'..='z').map(|l| l.to_string()).find(|l| !usadas.contains(l)).unwrap_or_else(|| "a".into())
+    v.sort_by(|a, b| a.chars().count().cmp(&b.chars().count()).then_with(|| a.cmp(b)));
+    v.dedup();
+    v
+}
+
+/// O próximo comando livre no escopo das configurações, olhando todos os interruptores (simples, paralelos e
+/// intermediários) e luminárias: depois de `a`, `b` e `c`, o próximo é `d`, seja qual for o interruptor.
+pub fn proximo_comando(pontos: &[PontoEletrico], quadro: Option<Handle>, setup: &crate::setup::Setup) -> String {
+    let usados = comandos_em_uso(pontos, quadro, setup.escopo_comandos);
+    // Há sempre um livre entre os `usados + 1` primeiros.
+    (0..=usados.len()).map(|i| nome_do_comando(i, setup.sufixo_comandos)).find(|c| !usados.contains(c)).unwrap_or_else(|| "a".into())
+}
+
+/// O esquema que a quantidade de interruptores de um comando dá.
+pub fn esquema_do_comando(interruptores: usize) -> String {
+    match interruptores {
+        0 => "sem interruptor".into(),
+        1 => "Simples".into(),
+        2 => "Paralelo (three-way)".into(),
+        n => format!("Paralelo + {} intermediário(s) (four-way)", n - 2),
+    }
 }
 
 /// O COMANDO de um interruptor de `teclas` teclas depois de usar `letra`: a letra entra nas que ele
@@ -103,7 +137,56 @@ pub fn comando_com_letra(atual: &str, letra: &str, teclas: usize) -> String {
         }
         v.push(l);
     }
-    v.concat()
+    crate::fiacao::juntar_letras(&v)
+}
+
+/// O comando que o ELECOMANDO está montando num desenho: a letra e os interruptores e luminárias clicados,
+/// na ordem dos cliques. A mini-barra lê e muda isto com o comando correndo.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SelecaoComando {
+    pub comando: String,
+    /// A letra foi escolhida pelo projetista: não acompanha o próximo livre.
+    pub manual: bool,
+    #[serde(serialize_with = "hexes")]
+    pub interruptores: Vec<Handle>,
+    #[serde(serialize_with = "hexes")]
+    pub luminarias: Vec<Handle>,
+}
+
+/// O quadro que dá o escopo da letra do comando em montagem: o do primeiro interruptor (ou luminária) que
+/// tiver um; sem nenhum, o único quadro do desenho.
+pub fn quadro_do_comando(analise: &crate::Analise, sel: &SelecaoComando) -> Option<Handle> {
+    sel.interruptores
+        .iter()
+        .chain(&sel.luminarias)
+        .filter_map(|h| analise.ponto(*h))
+        .find_map(|p| p.quadro)
+        .or_else(|| if let [q] = analise.quadros().as_slice() { Some(q.handle) } else { None })
+}
+
+fn hexes<S: serde::Serializer>(v: &[Handle], s: S) -> Result<S::Ok, S::Error> {
+    s.collect_seq(v.iter().map(|h| h.hex()))
+}
+
+static SELECAO_COMANDO: std::sync::Mutex<std::collections::BTreeMap<u64, SelecaoComando>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// O comando em montagem no desenho `desenho`.
+pub fn selecao_comando(desenho: u64) -> Option<SelecaoComando> {
+    SELECAO_COMANDO.lock().unwrap_or_else(|e| e.into_inner()).get(&desenho).cloned()
+}
+
+/// Troca (ou limpa, com `None`) o comando em montagem no desenho `desenho`.
+pub fn definir_selecao_comando(desenho: u64, selecao: Option<SelecaoComando>) {
+    let mut g = SELECAO_COMANDO.lock().unwrap_or_else(|e| e.into_inner());
+    match selecao {
+        Some(s) => {
+            g.insert(desenho, s);
+        }
+        None => {
+            g.remove(&desenho);
+        }
+    }
 }
 
 /// O circuito em que o ELECIRCUITO está trabalhando, por desenho: a barra de cima edita o circuito

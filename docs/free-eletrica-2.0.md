@@ -438,3 +438,13 @@ Ajustes de interface e de prancha:
 - **Mini-barra das tabelas e diagramas:** Tabela do quadro, Diagrama unifilar, Vista frontal e Tabela do rack mostram qual
   quadro ou rack vai para a planta.
 - Sem DPS, nenhum desenho nem tabela o mostra: a tabela do quadro diz "sem DPS".
+
+## Comandos em sequência (ELECOMANDO)
+
+- A próxima letra olha todos os interruptores (simples, paralelos e intermediários) e luminárias do projeto: depois de `a`,
+  `b` e `c` vem `d`, também para um paralelo. Nas Configurações > Geral: o escopo (global ou por quadro) e o padrão depois
+  do `z` (`aa`, `bb`... ou `a1`, `b1`...).
+- O ELECOMANDO ficou contínuo, com mini-barra: o comando atual (a letra livre, ou um em uso para editar), a contagem do
+  que foi clicado com o esquema, e Confirmar (Enter), Limpar seleção e Sair (ESC). Interruptores e luminárias em qualquer
+  ordem; 1 interruptor simples, 2 paralelos, 3 ou mais paralelos nas pontas e intermediários no meio.
+- No unifilar, a curva do disjuntor geral foi para a linha da corrente: embaixo dele ficava em cima do texto do DPS.

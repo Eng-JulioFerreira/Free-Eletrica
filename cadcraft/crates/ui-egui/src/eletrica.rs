@@ -254,6 +254,8 @@ enum Acao {
     Selecionar(Vec<Handle>),
     /// Enquadra estes pontos na tela.
     Localizar(Vec<[f64; 2]>),
+    /// Responde ao comando em andamento, como o teclado (Esc).
+    Entrada(cadcraft_engine::Input),
 }
 
 /// As linhas selecionadas de uma tabela, pelo id de cada linha (o circuito, o handle do ponto ou do eletroduto).
@@ -837,7 +839,12 @@ const PALETA_ELETRICA: [Secao; 6] = [
                 "elecircuito",
                 "Selecione o quadro, o número e os pontos do circuito; a barra sobre o desenho edita descrição, esquema e tensão (ELECIRCUITO)",
             ),
-            ferr(Icone::Interruptor, "Comandos e luminárias", "elecomando", "Selecione o interruptor e as luminárias que ele comanda (ELECOMANDO)"),
+            ferr(
+                Icone::Interruptor,
+                "Comandos e luminárias",
+                "elecomando",
+                "Clique nos interruptores e nas luminárias de um comando, em qualquer ordem; Enter grava (1 simples, 2 paralelos, 3 ou mais com intermediários) e já passa à próxima letra livre (ELECOMANDO)",
+            ),
         ],
     },
     Secao {
@@ -1435,6 +1442,11 @@ fn executar(app: &mut CadApp, acoes: Vec<Acao>) {
             Acao::Iniciar(id) => app.start(id),
             Acao::Selecionar(h) => app.session.set_selection(h),
             Acao::Localizar(pontos) => localizar(app, &pontos),
+            Acao::Entrada(i) => {
+                if let Err(e) = app.session.input(i) {
+                    app.set_status(format!("Free Elétrica: {e}"));
+                }
+            }
         }
     }
 }
@@ -1845,6 +1857,7 @@ pub fn sobre_canvas(app: &mut CadApp, ui: &mut egui::Ui, painter: &egui::Painter
                 "eleponto"
                     | "eleeletroduto"
                     | "elecircuito"
+                    | "elecomando"
                     | "elefiacao"
                     | "telefiacao"
                     | "elequadro_tabela"
@@ -2012,6 +2025,7 @@ fn barra_de_contexto(app: &CadApp, ctx: &egui::Context, xf: &crate::canvas::Xf, 
                 "elefiacao" | "telefiacao" => barra_fiacao(ui, uid, acoes),
                 "elequadro_tabela" | "eleunifilar" | "elequadro_frontal" => barra_documentacao(ui, uid, st, false, acoes),
                 "teletabela" => barra_documentacao(ui, uid, st, true, acoes),
+                "elecomando" => barra_comando(ui, uid, st, s, acoes),
                 _ => barra_circuito(ui, uid, st, acoes),
             });
         });
@@ -2161,6 +2175,59 @@ fn barra_ponto(ui: &mut egui::Ui, uid: u64, st: &Estado, s: &Setup, filtro: &mut
                 }
             }
         });
+    }
+}
+
+/// A mini-barra de ELECOMANDO: o comando atual (a próxima letra livre, ou um em uso para editar), o que já foi
+/// clicado com o esquema que isso dá, e confirmar, limpar e sair.
+fn barra_comando(ui: &mut egui::Ui, uid: u64, st: &Estado, s: &Setup, acoes: &mut Vec<Acao>) {
+    let sel = ele::circuito::selecao_comando(uid).unwrap_or_default();
+    let quadro = ele::circuito::quadro_do_comando(&st.analise, &sel);
+    let em_uso = ele::circuito::comandos_em_uso(&st.analise.pontos, quadro, s.escopo_comandos);
+    let rotulo = ui.label("Comando atual:");
+    // O texto em edição fica na memória da barra até sair do campo; a letra nova o reinicia.
+    let chave = egui::Id::new(("ele-barra-comando", uid, sel.comando.as_str()));
+    let mut texto: String = ui.ctx().data_mut(|d| d.get_temp(chave)).unwrap_or_else(|| sel.comando.clone());
+    let r = ui
+        .add_sized(vec2(56.0, ALTURA_BARRA), egui::TextEdit::singleline(&mut texto))
+        .labelled_by(rotulo.id)
+        .on_hover_text("Digite outra letra; uma em uso abre o comando dela para editar");
+    if r.lost_focus() && !texto.trim().is_empty() && texto.trim() != sel.comando {
+        acoes.push(Acao::Rodar("eletrica.comando.selecao", json!({ "comando": texto.trim() })));
+    }
+    ui.ctx().data_mut(|d| d.insert_temp(chave, texto));
+    egui::ComboBox::from_id_salt("ele-barra-comandos-em-uso").selected_text("Editar...").width(80.0).show_ui(ui, |ui| {
+        if ui.selectable_label(!sel.manual, "Próximo livre").clicked() {
+            acoes.push(Acao::Rodar("eletrica.comando.selecao", json!({ "comando": null })));
+        }
+        for c in &em_uso {
+            if ui.selectable_label(sel.manual && sel.comando == *c, format!("Comando {c}")).clicked() {
+                acoes.push(Acao::Rodar("eletrica.comando.selecao", json!({ "comando": c })));
+            }
+        }
+    });
+    ui.separator();
+    ui.label(format!(
+        "Interruptores selecionados: {} | Luminárias selecionadas: {} ({})",
+        sel.interruptores.len(),
+        sel.luminarias.len(),
+        ele::circuito::esquema_do_comando(sel.interruptores.len())
+    ));
+    ui.separator();
+    if ui
+        .add_enabled(!sel.interruptores.is_empty(), egui::Button::new("Confirmar comando (Enter)"))
+        .on_disabled_hover_text("Clique em ao menos um interruptor")
+        .clicked()
+    {
+        acoes.push(Acao::RodarComStatus("eletrica.comando.selecao", json!({ "confirmar": true }), |v| {
+            format!("Comando {} gravado", v["aplicado"]["comando"].as_str().unwrap_or("-"))
+        }));
+    }
+    if ui.button("Limpar seleção").clicked() {
+        acoes.push(Acao::Rodar("eletrica.comando.selecao", json!({ "limpar": true })));
+    }
+    if ui.button("Sair (ESC)").clicked() {
+        acoes.push(Acao::Entrada(cadcraft_engine::Input::Cancel));
     }
 }
 
@@ -4619,6 +4686,21 @@ fn aba_geral(ui: &mut egui::Ui, t: &Tokens, s: &mut Setup, tem_desenho: bool, ac
         ui.label("Raio de captura");
         ui.add(campo(&mut s.raio_captura, 0.01..=5.0, 0.01, 2, " m"))
             .on_hover_text("Distância máxima entre um bloco e a ponta do eletroduto que chega nele, e dos cliques nos blocos e eletrodutos");
+        ui.end_row();
+        ui.label("Escopo da sequência de comandos")
+            .on_hover_text("A próxima letra do Comandos e luminárias olha todos os interruptores e luminárias deste escopo");
+        egui::ComboBox::from_id_salt("ele-escopo-comandos").selected_text(s.escopo_comandos.nome()).width(230.0).show_ui(ui, |ui| {
+            for e in ele::setup::EscopoComandos::TODOS {
+                ui.selectable_value(&mut s.escopo_comandos, e, e.nome());
+            }
+        });
+        ui.end_row();
+        ui.label("Padrão após a letra z");
+        egui::ComboBox::from_id_salt("ele-sufixo-comandos").selected_text(s.sufixo_comandos.nome()).width(230.0).show_ui(ui, |ui| {
+            for e in ele::setup::SufixoComandos::TODOS {
+                ui.selectable_value(&mut s.sufixo_comandos, e, e.nome());
+            }
+        });
         ui.end_row();
     });
     ui.label(pequeno("Os eletrodutos correm no teto, no piso ou na parede; cada ponta desce ou sobe até a altura do bloco.", t.text_dim));

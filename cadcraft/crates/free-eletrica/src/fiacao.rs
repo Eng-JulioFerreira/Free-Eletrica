@@ -504,9 +504,37 @@ fn hex<S: serde::Serializer>(h: &Handle, s: S) -> Result<S::Ok, S::Error> {
     s.serialize_str(&h.hex())
 }
 
-/// As letras de um COMANDO: "a", "ab", "a,b" ou "a b".
+/// Os comandos de um COMANDO, um por tecla: "a", "ab" (as teclas `a` e `b`), "a,b" ou "a b". Depois do `z`,
+/// um comando é a mesma letra repetida (`aa`, `bbb`) ou letra e número (`a1`, `c12`); separados por vírgula,
+/// ponto e vírgula, barra ou espaço quando o interruptor tem mais de uma tecla (`aa,b1`).
 pub fn letras(comando: &str) -> Vec<String> {
-    comando.chars().filter(|c| c.is_alphabetic()).map(|c| c.to_lowercase().to_string()).collect()
+    let mut v: Vec<String> = Vec::new();
+    for parte in comando.split(|c: char| matches!(c, ',' | ';' | '/') || c.is_whitespace()) {
+        let t: Vec<char> = parte.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect();
+        let letras_do_inicio = t.iter().take_while(|c| c.is_alphabetic()).count();
+        let resto = t.get(letras_do_inicio..).unwrap_or_default();
+        if letras_do_inicio == 0 {
+            continue;
+        }
+        if !resto.is_empty() && resto.iter().all(char::is_ascii_digit) {
+            // Letra e número: um comando só. Letras antes da última são teclas do jeito antigo.
+            let (antes, ultima) = t.split_at(letras_do_inicio - 1);
+            v.extend(antes.iter().map(char::to_string));
+            v.push(ultima.iter().collect());
+        } else if letras_do_inicio > 1 && t.iter().take(letras_do_inicio).all(|c| Some(c) == t.first()) {
+            // A mesma letra repetida: um comando só (nenhum interruptor tem duas teclas com a mesma letra).
+            v.push(t.iter().take(letras_do_inicio).collect());
+        } else {
+            v.extend(t.iter().take(letras_do_inicio).map(char::to_string));
+        }
+    }
+    v
+}
+
+/// O COMANDO de um interruptor com estes comandos, um por tecla: juntos ("ab") quando todos são de uma letra,
+/// como sempre foi; separados por vírgula ("aa,b") quando algum é maior.
+pub fn juntar_letras(lista: &[String]) -> String {
+    if lista.iter().all(|l| l.chars().count() == 1) { lista.concat() } else { lista.join(",") }
 }
 
 fn trecho_de(rede: &Rede, e: usize, circuitos: Vec<Condutores>) -> Option<Trecho> {
