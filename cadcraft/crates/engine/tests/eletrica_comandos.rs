@@ -1994,6 +1994,23 @@ fn protecao_geral_dps_metodo_e_criterio_por_comandos() {
     assert!(s.execute("eletrica.quadro", &json!({ "quadro": q, "classeDps": [1] })).is_err());
     let rot = s.execute("eletrica.rotear", &json!({ "quadro": q })).unwrap();
     assert_eq!(rot["alimentador"]["disjuntor"].as_f64(), Some(63.0));
+    // O disjuntor do DPS muda livremente entre os comerciais e fica gravado no quadro.
+    for d in [25, 63, 16] {
+        let r = s.execute("eletrica.quadro", &json!({ "quadro": q, "disjuntorDps": d })).unwrap();
+        assert_eq!(r["config"]["disjuntorDps"].as_f64(), Some(f64::from(d)));
+    }
+    // Um disjuntor geral novo leva o cabo junto: a seção travada pequena sai e o automático comporta o disjuntor.
+    s.execute("eletrica.quadro", &json!({ "quadro": q, "secaoGeral": 10 })).unwrap();
+    let r = s.execute("eletrica.quadro", &json!({ "quadro": q, "disjuntorGeral": 80 })).unwrap();
+    assert!(r["config"]["secaoGeral"].is_null(), "{}", r["config"]);
+    let a = s.execute("eletrica.rotear", &json!({ "quadro": q })).unwrap()["alimentador"].clone();
+    assert!(a["iz"].as_f64().unwrap() >= 80.0, "{a}");
+    assert!(a["avisos"].as_array().unwrap().iter().all(|v| !v.as_str().unwrap().contains("acima da capacidade")), "{a}");
+    // Travar a seção na mesma chamada, ou depois, continua valendo, e aí o aviso traz a seção sugerida.
+    s.execute("eletrica.quadro", &json!({ "quadro": q, "secaoGeral": 10 })).unwrap();
+    let a = s.execute("eletrica.rotear", &json!({ "quadro": q })).unwrap()["alimentador"].clone();
+    assert_eq!(a["secaoTravada"].as_bool(), Some(true));
+    assert!(a["secaoSugerida"].as_f64().unwrap() > 10.0, "{a}");
     // null tira a trava; sem DPS, o alimentador diz.
     s.execute("eletrica.quadro", &json!({ "quadro": q, "disjuntorGeral": null, "secaoGeral": null, "usarDps": false })).unwrap();
     let rot = s.execute("eletrica.rotear", &json!({ "quadro": q })).unwrap();

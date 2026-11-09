@@ -965,6 +965,8 @@ pub struct Alimentador {
     pub disjuntor_travado: bool,
     /// A seção travada à mão não comporta o disjuntor geral travado: a menor que comporta.
     pub secao_sugerida: Option<f64>,
+    /// A capacidade corrigida (Iz) de cada seção comercial do alimentador, de 2,5 mm² em diante: (mm², A).
+    pub capacidades: Vec<(f64, f64)>,
     /// O que a norma não aceita na escolha travada: avisa sem impedir.
     pub avisos: Vec<String>,
 }
@@ -1038,7 +1040,15 @@ pub fn alimentador(ib: f64, fases: u8, tensao_fn: f64, cfg: &nbr5410::Config, co
         secao_travada: config.secao_geral.is_some(),
         disjuntor_travado: config.disjuntor_geral.is_some(),
         secao_sugerida,
+        capacidades: nbr5410::SECOES.iter().copied().filter(|s| *s >= 2.5).filter_map(|s| iz_de(s).map(|iz| (s, iz))).collect(),
         avisos,
+    }
+}
+
+impl Alimentador {
+    /// A capacidade corrigida (Iz) de uma seção do alimentador.
+    pub fn iz_da_secao(&self, secao: f64) -> Option<f64> {
+        self.capacidades.iter().find(|(s, _)| (s - secao).abs() < 1e-9).map(|(_, iz)| *iz)
     }
 }
 

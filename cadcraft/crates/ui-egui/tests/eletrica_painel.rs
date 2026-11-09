@@ -548,7 +548,7 @@ fn paleta_ferramentas_e_fluxo_completo() {
     // Etapa 3: a proteção geral, o DPS e os DR usados.
     for campo in [
         "Disjuntor geral",
-        "Cabo alimentador geral",
+        "Seção do Cabo Alimentador Geral (mm²)",
         "Incluir DPS no quadro",
         "Tensão (Uc)",
         "Capacidade (Imax)",
@@ -558,6 +558,17 @@ fn paleta_ferramentas_e_fluxo_completo() {
     ] {
         assert!(h.query_all_by_label(campo).count() >= 1, "{campo}");
     }
+    // O disjuntor prévio do DPS: marcado, a corrente aparece e muda sem voltar para 40 A.
+    let c = h.state_mut().run("eletrica.rotear", json!({})).unwrap()["config"].clone();
+    if c["disjuntorDps"].is_null() {
+        h.get_by_label("Incluir disjuntor de proteção prévio para o DPS").click();
+        h.run_steps(3);
+    }
+    h.get_by_label("Corrente do disjuntor do DPS");
+    h.state_mut().run("eletrica.quadro", json!({ "disjuntorDps": 25 })).unwrap();
+    h.run_steps(5);
+    let c = h.state_mut().run("eletrica.rotear", json!({})).unwrap()["config"].clone();
+    assert_eq!(c["disjuntorDps"].as_f64(), Some(25.0), "{c}");
     if let Ok(saida) = std::env::var("FREE_ELETRICA_PNG_DR") {
         h.render().unwrap().save(saida).unwrap();
     }

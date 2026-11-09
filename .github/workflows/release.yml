@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       versao:
-        description: "Versão, sem o v (ex.: 0.3.0)"
+        description: "Versão, sem o v (ex.: 0.4.0)"
         required: true
-        default: "0.3.0"
+        default: "0.4.0"
 
 permissions:
   contents: write

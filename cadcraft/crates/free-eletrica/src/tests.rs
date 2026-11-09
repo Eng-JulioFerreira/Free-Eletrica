@@ -1820,6 +1820,17 @@ fn disjuntor_geral_travado_leva_o_cabo_automatico_junto() {
     let a2 = quadro::alimentador(30.0, 3, 220.0, &cfg, &config);
     assert_eq!(a2.secao_sugerida, a.secao);
     assert!(a2.avisos.iter().any(|t| t.contains("acima da capacidade") && t.contains("mm² ou mais")), "{:?}", a2.avisos);
+    // O caso do aviso "63 A acima da capacidade do alimentador (50.0 A)": em B1, PVC, 3 condutores carregados,
+    // 10 mm² conduz 50 A; com o disjuntor de 63 A o cabo sobe para 16 mm² (68 A).
+    let b1 = nbr5410::Config { isolacao: nbr5410::Isolacao::Pvc, metodo: nbr5410::MetodoInstalacao::B1, ..Config::default() };
+    let a63 = quadro::alimentador(30.0, 3, 220.0, &b1, &quadro::ConfigQuadro { disjuntor_geral: Some(63.0), ..Default::default() });
+    assert_eq!((a63.secao, a63.disjuntor), (Some(16.0), Some(63.0)), "{a63:?}");
+    assert!(a63.iz.unwrap() >= 63.0 && a63.avisos.is_empty(), "{a63:?}");
+    assert!(perto(a63.iz_da_secao(10.0).unwrap(), 50.0 * b1.fct * b1.fca, 1e-9));
+    assert!(perto(a63.iz_da_secao(16.0).unwrap(), 68.0 * b1.fct * b1.fca, 1e-9));
+    // A lista das capacidades vai de 2,5 mm² em diante, crescendo.
+    assert_eq!(a63.capacidades.first().map(|c| c.0), Some(2.5));
+    assert!(a63.capacidades.windows(2).all(|w| w[0].1 < w[1].1));
 }
 
 #[test]

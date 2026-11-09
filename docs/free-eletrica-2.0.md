@@ -476,3 +476,10 @@ Ajustes de interface e de prancha:
   tensão fora das do quadro, alimentador...), cada um com "Ir para o ponto", que centraliza e destaca. O disjuntor geral
   travado (50 A) com o cabo automático sobe o cabo até comportá-lo, em vez de acusar o alimentador.
 - **Lista de materiais:** Inserir Tabela na Prancha (DXF) e Exportar para Excel (.csv), lado a lado.
+
+## Correções da v0.4.0
+
+- **Alimentador:** escolher o disjuntor geral devolve o cabo ao automático, que sobe até Iz ≥ In; a lista "Seção do Cabo
+  Alimentador Geral (mm²)" mostra o Iz de cada seção, e o aviso da etapa 1 traz "Corrigir alimentador para ... mm²".
+- **Disjuntor do DPS:** uma lista com 10, 16, 20, 25, 32, 40, 50 e 63 A, ligada ao valor gravado no quadro. Antes era um
+  campo de arrastar sobre uma variável refeita a cada quadro de tela, que voltava para 40 A.

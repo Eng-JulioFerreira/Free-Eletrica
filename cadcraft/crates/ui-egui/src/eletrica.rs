@@ -2854,11 +2854,24 @@ fn etapa_diagnostico(
                     if i.eletroduto { "Eletroduto".to_string() } else { analise.ponto(i.handle).map_or_else(|| i.handle.hex(), |p| p.rotulo()) };
                 celula(ui, 180.0, nome.as_str(), false);
                 celula(ui, 520.0, i.motivo.as_str(), false);
-                let botao = egui::Button::new("🔍 Ir para o ponto").selected(marcado == Some(i.pos));
-                if ui.add(botao).on_hover_text("Centraliza o desenho no ponto e o destaca com um círculo").clicked() {
-                    acoes.push(Acao::Localizar(vec![i.pos]));
-                    acoes.push(Acao::Marcar(Some(i.pos)));
-                }
+                ui.horizontal(|ui| {
+                    let botao = egui::Button::new("🔍 Ir para o ponto").selected(marcado == Some(i.pos));
+                    if ui.add(botao).on_hover_text("Centraliza o desenho no ponto e o destaca com um círculo").clicked() {
+                        acoes.push(Acao::Localizar(vec![i.pos]));
+                        acoes.push(Acao::Marcar(Some(i.pos)));
+                    }
+                    // O alimentador que não comporta o disjuntor geral: a correção na própria linha.
+                    if i.handle == r.quadro
+                        && i.motivo.contains("acima da capacidade do alimentador")
+                        && let Some(s) = r.alimentador.secao_sugerida
+                        && ui
+                            .button(texto_corrigir_alimentador(&r.alimentador, s))
+                            .on_hover_text("A menor seção com Iz ≥ In (NBR 5410, 5.3.4.1)")
+                            .clicked()
+                    {
+                        opcao_do_quadro(acoes, r.quadro, "secaoGeral", json!(s));
+                    }
+                });
                 ui.end_row();
             }
         });
@@ -3254,6 +3267,17 @@ fn protecao_e_montagem(ui: &mut egui::Ui, t: &Tokens, r: &ele::ResumoQuadro, q: 
     montagem_do_quadro(ui, t, r, q, acoes);
 }
 
+/// O botão que corrige o alimentador para a seção sugerida: "Corrigir alimentador para 16 mm² (68 A)".
+fn texto_corrigir_alimentador(a: &ele::quadro::Alimentador, secao: f64) -> String {
+    match a.iz_da_secao(secao) {
+        Some(iz) => format!("Corrigir alimentador para {} mm² ({} A)", br(secao), fixo(iz, 0)),
+        None => format!("Corrigir alimentador para {} mm²", br(secao)),
+    }
+}
+
+/// Os disjuntores comerciais do DPS (A).
+const DISJUNTORES_DPS: [f64; 8] = [10.0, 16.0, 20.0, 25.0, 32.0, 40.0, 50.0, 63.0];
+
 /// A proteção geral (disjuntor e alimentador) e o DPS do quadro: a etapa 3 do Dimensionar projeto. O cadeado
 /// mostra o que foi travado à mão.
 fn protecao_geral_e_dps(ui: &mut egui::Ui, r: &ele::ResumoQuadro, q: Handle, acoes: &mut Vec<Acao>) {
@@ -3297,14 +3321,19 @@ fn protecao_geral_e_dps(ui: &mut egui::Ui, r: &ele::ResumoQuadro, q: Handle, aco
             },
         );
         ui.end_row();
-        ui.label("Cabo alimentador geral");
-        let texto = a.secao.map_or("-".to_string(), |s| format!("{}{} mm²", cadeado(a.secao_travada), br(s)));
-        egui::ComboBox::from_id_salt(("ele-secao-geral", q)).selected_text(texto).width(110.0).show_ui(ui, |ui| {
-            if ui.selectable_label(!a.secao_travada, "Automática").clicked() {
+        ui.label("Seção do Cabo Alimentador Geral (mm²)").on_hover_text(
+            "Automática: a menor seção com Iz ≥ In do disjuntor geral (NBR 5410, 5.3.4.1). Ao lado de cada seção, a capacidade Iz corrigida",
+        );
+        let com_iz = |s: f64| a.iz_da_secao(s).map_or_else(|| format!("{} mm²", br(s)), |iz| format!("{} mm² ({} A)", br(s), fixo(iz, 0)));
+        let texto = a.secao.map_or("-".to_string(), |s| format!("{}{}", cadeado(a.secao_travada), com_iz(s)));
+        egui::ComboBox::from_id_salt(("ele-secao-geral", q)).selected_text(texto).width(150.0).show_ui(ui, |ui| {
+            if ui.selectable_label(!a.secao_travada, "Automática (pelo disjuntor geral)").clicked() {
                 opcao_do_quadro(acoes, q, "secaoGeral", Value::Null);
             }
-            for s in SECOES {
-                if ui.selectable_label(a.secao_travada && a.secao == Some(s), format!("🔒 {} mm²", br(s))).clicked() {
+            for &(s, iz) in &a.capacidades {
+                let pequeno_demais = a.disjuntor.is_some_and(|d| iz + 1e-9 < d);
+                let rotulo = format!("🔒 {} mm² ({} A){}", br(s), fixo(iz, 0), if pequeno_demais { " < In" } else { "" });
+                if ui.selectable_label(a.secao_travada && a.secao == Some(s), rotulo).clicked() {
                     opcao_do_quadro(acoes, q, "secaoGeral", json!(s));
                 }
             }
@@ -3326,7 +3355,7 @@ fn protecao_geral_e_dps(ui: &mut egui::Ui, r: &ele::ResumoQuadro, q: Handle, aco
     if let (Some(s), Some(d)) = (a.secao_sugerida, a.disjuntor) {
         ui.horizontal_wrapped(|ui| {
             ui.label(pequeno(format!("O cabo travado não comporta o disjuntor geral de {} A.", br(d)), COR_AVISO));
-            if ui.button(format!("Usar {} mm²", br(s))).on_hover_text("A menor seção com Iz ≥ In (NBR 5410, 5.3.4.1)").clicked() {
+            if ui.button(texto_corrigir_alimentador(a, s)).on_hover_text("A menor seção com Iz ≥ In (NBR 5410, 5.3.4.1)").clicked() {
                 opcao_do_quadro(acoes, q, "secaoGeral", json!(s));
             }
             if ui.button("Cabo automático").on_hover_text("O cabo acompanha o disjuntor geral").clicked() {
@@ -3383,13 +3412,19 @@ fn protecao_geral_e_dps(ui: &mut egui::Ui, r: &ele::ResumoQuadro, q: Handle, aco
         {
             opcao_do_quadro(acoes, q, "disjuntorDps", if previo { json!(a.disjuntor.unwrap_or(40.0).min(40.0)) } else { Value::Null });
         }
-        if let Some(mut atual) = c.disjuntor_dps {
+        // O valor vem do quadro (XDATA) a cada quadro de tela e a escolha vai direto para ele: nada local volta a 40 A.
+        if let Some(atual) = c.disjuntor_dps {
             ui.horizontal(|ui| {
-                ui.label("Corrente");
-                let r = ui.add(egui::DragValue::new(&mut atual).range(1.0..=125.0).speed(1.0).suffix(" A"));
-                if r.lost_focus() || r.drag_stopped() {
-                    opcao_do_quadro(acoes, q, "disjuntorDps", json!(atual));
-                }
+                ui.label("Corrente do disjuntor do DPS");
+                egui::ComboBox::from_id_salt(("ele-disj-dps", q)).selected_text(format!("{} A", br(atual))).width(80.0).show_ui(ui, |ui| {
+                    for d in DISJUNTORES_DPS {
+                        let acima = a.disjuntor.is_some_and(|g| d > g + 1e-9);
+                        let rotulo = if acima { format!("{} A (> geral)", br(d)) } else { format!("{} A", br(d)) };
+                        if ui.selectable_label((atual - d).abs() < 1e-9, rotulo).clicked() {
+                            opcao_do_quadro(acoes, q, "disjuntorDps", json!(d));
+                        }
+                    }
+                });
                 ui.label("Polos");
                 egui::ComboBox::from_id_salt(("ele-polos-dps", q)).selected_text(format!("{}P", a.polos_dps)).width(70.0).show_ui(ui, |ui| {
                     for n in 1..=3u8 {

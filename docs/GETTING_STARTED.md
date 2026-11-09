@@ -112,7 +112,9 @@ progresso no topo (**1. Diagnóstico → 2. Circuitos → 3. Diagrama Unifilar �
    **Incluir DPS no quadro**: desmarcado, o quadro fica sem DPS; classe, tensão Uc, capacidade em kA e o disjuntor de
    proteção prévio) e a corrente e a sensibilidade de cada DR usado. O cadeado mostra o que você travou à mão. Travar o
    disjuntor geral (50 A, por exemplo) com o cabo automático sobe o cabo até a menor seção que comporta o disjuntor; com
-   o cabo travado pequeno demais, a etapa avisa e oferece **Usar ... mm²**.
+   o cabo travado pequeno demais, a etapa avisa e oferece **Corrigir alimentador para ... mm²** (também no aviso da
+   etapa 1). A lista **Seção do Cabo Alimentador Geral (mm²)** mostra a capacidade Iz de cada seção. O disjuntor prévio do
+   DPS é escolhido entre 10 e 63 A.
 4. **Vista Frontal:** a largura máxima por fileira (12, 16, 18 ou 24 módulos DIN), o barramento das fases (pente DIN ou
    espinha de peixe), a montagem (embutir ou sobrepor) e os módulos reserva. Neutro e terra ficam sempre nas laterais
    internas do chassi.

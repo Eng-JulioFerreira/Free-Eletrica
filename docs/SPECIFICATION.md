@@ -109,7 +109,9 @@ diverge do circuito, a tensão fora das do quadro, os outros avisos do circuito 
 (alimentador, fases, DPS) no próprio quadro.
 
 O disjuntor geral travado com a seção automática leva o cabo do alimentador à menor seção com Iz ≥ In (5.3.4.1); com a
-seção também travada e pequena demais, o alimentador avisa e sugere a menor que comporta (`secaoSugerida`).
+seção também travada e pequena demais, o alimentador avisa e sugere a menor que comporta (`secaoSugerida`). Escolher um
+disjuntor geral novo pelo `eletrica.quadro` (sem `secaoGeral` na mesma chamada) devolve a seção ao automático. O
+alimentador traz a capacidade corrigida de cada seção comercial (`capacidades`), que a lista da etapa 3 mostra.
 
 ### Lista de materiais
 
@@ -155,6 +157,6 @@ O ambiente de compilação e os portões de qualidade estão em [CLAUDE.md](../C
 | Comando | O quê |
 | :--- | :--- |
 | `scripts\package_release.ps1` | Compila em release e gera `dist/FreeEletrica/` e `dist/FreeEletrica-v<versão>-win64.zip` |
-| `cargo xtask dist --versao 0.3.0` | O mesmo, dentro de `cadcraft/`, com o ambiente carregado |
+| `cargo xtask dist --versao 0.4.0` | O mesmo, dentro de `cadcraft/`, com o ambiente carregado |
 | `scripts/package_appimage.sh` | Num Linux x86_64: compila em release e gera `dist/FreeEletrica-v<versão>-x86_64.AppImage` |
 | Workflow `Release` (`.github/workflows/release.yml`) | Gera os dois pacotes no GitHub Actions (Windows e Ubuntu 22.04) e cria a Release como rascunho; é disparado à mão |

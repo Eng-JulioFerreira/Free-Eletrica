@@ -1,7 +1,7 @@
 ﻿# SPDX-License-Identifier: GPL-3.0-only
 # Gera o pacote de distribuicao: compila em release e monta dist/FreeEletrica e o .zip.
-# Uso: powershell -ExecutionPolicy Bypass -File scripts\package_release.ps1 [-Versao 0.3.0]
-param([string]$Versao = "0.3.0")
+# Uso: powershell -ExecutionPolicy Bypass -File scripts\package_release.ps1 [-Versao 0.4.0]
+param([string]$Versao = "0.4.0")
 $ErrorActionPreference = "Stop"
 
 # O ambiente local fica em C:\rust; no CI o cargo ja esta no PATH.
