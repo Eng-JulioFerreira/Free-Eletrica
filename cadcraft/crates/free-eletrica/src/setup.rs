@@ -213,6 +213,50 @@ impl CorProtecao {
     }
 }
 
+/// A fonte dos textos que o Free Elétrica põe no desenho (tabelas, unifilar, vista frontal, legendas, tags e
+/// atributos dos blocos de fábrica), no estilo de texto `FREE_ELETRICA`. Só o nome do arquivo vai para o DXF:
+/// a fonte é a instalada no computador (no Windows, as TrueType vêm com o sistema; as SHX, com o AutoCAD).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FonteTexto {
+    #[default]
+    Arial,
+    Isocp,
+    Tahoma,
+    Calibri,
+    Simplex,
+}
+
+impl FonteTexto {
+    pub const TODAS: [FonteTexto; 5] = [Self::Arial, Self::Isocp, Self::Tahoma, Self::Calibri, Self::Simplex];
+
+    pub fn nome(self) -> &'static str {
+        match self {
+            Self::Arial => "Arial (padrão)",
+            Self::Isocp => "ISOCP",
+            Self::Tahoma => "Tahoma",
+            Self::Calibri => "Calibri",
+            Self::Simplex => "Simplex",
+        }
+    }
+
+    /// O arquivo da fonte no estilo de texto do DXF.
+    pub fn arquivo(self) -> &'static str {
+        match self {
+            Self::Arial => "arial.ttf",
+            Self::Isocp => "isocp.shx",
+            Self::Tahoma => "tahoma.ttf",
+            Self::Calibri => "calibri.ttf",
+            Self::Simplex => "simplex.shx",
+        }
+    }
+
+    /// TrueType: tem os acentos e o ç em qualquer programa que a encontre.
+    pub fn truetype(self) -> bool {
+        self.arquivo().ends_with(".ttf")
+    }
+}
+
 /// Onde a sequência de comandos (`a`, `b`, `c`...) não repete.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -588,6 +632,8 @@ pub struct Setup {
     /// A sequência das letras de comando: onde não repete e o que vem depois do `z`.
     pub escopo_comandos: EscopoComandos,
     pub sufixo_comandos: SufixoComandos,
+    /// A fonte dos textos que o programa põe no desenho.
+    pub fonte_textos: FonteTexto,
     pub unidade: Unidade,
     /// Camadas dos eletrodutos, separadas por vírgula, com curingas `*` e `?`.
     pub camadas_eletroduto: String,
@@ -655,6 +701,7 @@ impl Setup {
             cor_protecao: CorProtecao::Verde,
             escopo_comandos: EscopoComandos::Global,
             sufixo_comandos: SufixoComandos::LetrasRepetidas,
+            fonte_textos: FonteTexto::Arial,
             unidade: Unidade::default(),
             camadas_eletroduto: "*ELETRODUTO*".into(),
             camadas_piso: "*PISO*".into(),

@@ -860,6 +860,7 @@ pub fn inserir_tabela(doc: &mut Drawing, analise: &Analise, setup: &Setup, rack:
     if !pos.iter().all(|v| v.is_finite()) {
         return Err("posição inválida".into());
     }
+    crate::tabela::garantir_estilo(doc, setup.fonte_textos);
     let t = rotear(doc, analise, setup);
     let r = t.racks.iter().find(|r| r.rack == rack).ok_or_else(|| format!("o objeto {} não é um rack / quadro VDI", rack.hex()))?;
     gravar_tabela(doc, r, metros_por_unidade(doc, setup));

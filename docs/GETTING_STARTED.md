@@ -108,7 +108,8 @@ progresso no topo (**1. Diagnóstico → 2. Circuitos → 3. Diagrama Unifilar �
 **Aplicar e Concluir** grava o cálculo no quadro, atualiza as tags e as tabelas e desenha o unifilar e a vista frontal ao
 lado do quadro, se marcados. Ctrl+Z desfaz.
 
-**Tags de fiação** (`ELEFIACAO`): a mini-barra escolhe o modo. **Direto no eletroduto** é um clique no trecho.
+**Tags de fiação** (`ELEFIACAO`): a mini-barra escolhe o modo. Nos retornos vai só a letra do comando (`1d`, `d`, `d`),
+sem apóstrofo nos paralelos, com espaço para as letras não se encostarem. **Direto no eletroduto** é um clique no trecho.
 **Com linha de chamada** são dois cliques: o ponto no eletroduto e onde a base da tag começa, no ângulo que você quiser.
 Enter no começo põe uma tag no meio de todos os eletrodutos.
 
@@ -129,6 +130,10 @@ Na seção **Documentação e Tabelas**:
 - **Tabela de materiais** (`ELEMATERIAIS_TABELA`): a mesma lista desenhada como tabela na planta.
 - **Atualizar tags e tabelas** (`ELEREGEN`): refaz tudo o que foi gerado, sem mudar as posições. Use depois de qualquer
   mudança.
+
+Os textos gerados usam o estilo `FREE_ELETRICA`, com a fonte de **Configurações... > Geral > Fonte padrão dos textos e
+tabelas no desenho** (Arial, o padrão, ISOCP, Tahoma, Calibri ou Simplex). As TrueType (Arial, Tahoma, Calibri) mostram
+acentos e ç em qualquer programa que tenha a fonte; a troca vale para tudo em **Atualizar tags e tabelas**.
 
 ## Passo 8: Fluxo rápido de telecomunicações (`Telecom`)
 

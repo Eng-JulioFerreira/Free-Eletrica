@@ -449,3 +449,13 @@ Ajustes de interface e de prancha:
   ordem. O esquema vem do tipo de cada bloco, que o comando não muda: simples só sozinho; num grupo, dois paralelos nas
   pontas (o clicado primeiro recebe a fase) e os intermediários sempre no meio. Um grupo que não fecha é recusado.
 - No unifilar, a curva do disjuntor geral foi para a linha da corrente: embaixo dele ficava em cima do texto do DPS.
+
+## Fonte com acentos, tags de retorno e destaque no ELECOMANDO
+
+- **Fonte:** os textos gerados usam o estilo `FREE_ELETRICA`, com Arial por padrão (acentos e ç); Configurações > Geral
+  escolhe entre Arial, ISOCP, Tahoma, Calibri e Simplex, e Atualizar tags e tabelas aplica a troca em tudo. Antes eles
+  usavam o estilo Standard, na fonte de traço do CADCraft, que não tem as letras acentuadas.
+- **Tags de retorno:** só a letra do comando, sem o apóstrofo dos paralelos; o número do circuito fica à esquerda da
+  primeira letra, e o passo entre as marcas cresce para os textos vizinhos não se tocarem.
+- **ELECOMANDO:** a mini-barra mostra "Interruptores: X | Luminárias: Y -> Esquema: ..." e os blocos clicados ficam em
+  destaque no desenho (os interruptores com o número da ordem do clique) até confirmar.

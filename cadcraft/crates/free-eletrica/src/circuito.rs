@@ -118,8 +118,9 @@ pub fn esquema_do_comando(interruptores: usize) -> String {
     match interruptores {
         0 => "sem interruptor".into(),
         1 => "Simples".into(),
-        2 => "Paralelo (three-way)".into(),
-        n => format!("Paralelo + {} intermediário(s) (four-way)", n - 2),
+        2 => "Paralelo (Three-Way)".into(),
+        3 => "Paralelo + Intermediário (Four-Way)".into(),
+        n => format!("Paralelo + {} Intermediários (Four-Way)", n - 2),
     }
 }
 

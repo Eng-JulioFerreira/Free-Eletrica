@@ -75,6 +75,13 @@ O tipo de linha e a cor do perfil ficam na própria entidade do eletroduto. O di
 As configurações do Setup, incluindo PE compartilhado, FCA fixo, catálogos, perfis e tabelas de demanda próprias, ficam nas
 preferências do programa, não no DXF.
 
+### Fonte dos textos
+
+Tudo o que o programa escreve no desenho (tabelas, unifilar, vista frontal, legendas, tags, lista de materiais e os
+atributos dos blocos de fábrica) usa o estilo de texto `FREE_ELETRICA`. A fonte dele é a de `fonteTextos` nas configurações
+(`arial` é o padrão; `isocp`, `tahoma`, `calibri`, `simplex`): só o nome do arquivo (`arial.ttf`, `isocp.shx`...) vai para o
+DXF, nenhuma fonte vem com o programa. Cada gerador e o ELEREGEN acertam o estilo, e os textos já desenhados mudam junto.
+
 ### Letras de comando
 
 O `COMANDO` de um interruptor guarda um comando por tecla: `ab` são as teclas `a` e `b` (como sempre), e depois do `z`

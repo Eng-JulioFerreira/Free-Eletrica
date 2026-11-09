@@ -244,6 +244,7 @@ pub fn inserir(doc: &mut Drawing, analise: &Analise, pos: [f64; 2], metros: f64,
         return Err("posição inválida".into());
     }
     let m = if metros > 0.0 { metros } else { 1.0 };
+    crate::tabela::garantir_estilo(doc, crate::setup::atual().fonte_textos);
     let largura = gravar_bloco(doc, analise, m, disciplina);
     let existente = inserida_de(doc, disciplina);
     let h = inserir_bloco(doc, bloco(disciplina), existente, pos)?;

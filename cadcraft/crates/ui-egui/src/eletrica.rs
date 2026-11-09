@@ -1884,10 +1884,36 @@ pub fn sobre_canvas(app: &mut CadApp, ui: &mut egui::Ui, painter: &egui::Painter
     }
     let mut acoes = Vec::new();
     if let Some(c) = barra {
+        if c == "elecomando"
+            && let Ok(uid) = app.session.state().map(|d| d.uid)
+        {
+            desenhar_selecao_comando(painter, xf, &st, uid);
+        }
         barra_de_contexto(app, &ctx, xf, &c, &st, &s, &mut acoes);
     }
     guardar(&ctx, st);
     executar(app, acoes);
+}
+
+/// O que já foi clicado no ELECOMANDO, em destaque no desenho até confirmar: os interruptores com o número da
+/// ordem do clique, as luminárias com um anel.
+fn desenhar_selecao_comando(painter: &egui::Painter, xf: &crate::canvas::Xf, st: &Estado, uid: u64) {
+    let Some(sel) = ele::circuito::selecao_comando(uid) else { return };
+    let cor = Tokens::get().accent;
+    let cor_luz = Color32::from_rgb(250, 215, 60);
+    for (i, h) in sel.interruptores.iter().enumerate() {
+        let Some(p) = st.analise.ponto(*h) else { continue };
+        let c = na_tela(xf, p.posicao);
+        painter.circle_filled(c, 14.0, cor.gamma_multiply(0.30));
+        painter.circle_stroke(c, 14.0, Stroke::new(2.5, cor));
+        painter.text(c + vec2(13.0, -13.0), egui::Align2::LEFT_BOTTOM, (i + 1).to_string(), crate::theme::small(), cor);
+    }
+    for h in &sel.luminarias {
+        let Some(p) = st.analise.ponto(*h) else { continue };
+        let c = na_tela(xf, p.posicao);
+        painter.circle_filled(c, 14.0, cor_luz.gamma_multiply(0.25));
+        painter.circle_stroke(c, 14.0, Stroke::new(2.5, cor_luz));
+    }
 }
 
 fn na_tela(xf: &crate::canvas::Xf, p: [f64; 2]) -> egui::Pos2 {
@@ -2210,7 +2236,7 @@ fn barra_comando(ui: &mut egui::Ui, uid: u64, st: &Estado, s: &Setup, acoes: &mu
     // O esquema pelo tipo de cada bloco (o atributo manda); um grupo que não fecha aparece em destaque.
     let fecha = ele::editar::papeis_na_analise(&st.analise, &sel.interruptores).is_ok();
     let esquema = ele::editar::esquema_dos_interruptores(&st.analise, &sel.interruptores);
-    let contagem = format!("Interruptores selecionados: {} | Luminárias selecionadas: {} ({esquema})", sel.interruptores.len(), sel.luminarias.len());
+    let contagem = format!("Interruptores: {} | Luminárias: {} -> Esquema: {esquema}", sel.interruptores.len(), sel.luminarias.len());
     ui.label(if fecha || sel.interruptores.is_empty() { RichText::new(contagem) } else { RichText::new(contagem).color(COR_AVISO) });
     ui.separator();
     if ui
@@ -2225,7 +2251,7 @@ fn barra_comando(ui: &mut egui::Ui, uid: u64, st: &Estado, s: &Setup, acoes: &mu
     if ui.button("Limpar seleção").clicked() {
         acoes.push(Acao::Rodar("eletrica.comando.selecao", json!({ "limpar": true })));
     }
-    if ui.button("Sair (ESC)").clicked() {
+    if ui.button("X Sair (ESC)").on_hover_text("Encerra a ferramenta; o que não foi confirmado não é gravado").clicked() {
         acoes.push(Acao::Entrada(cadcraft_engine::Input::Cancel));
     }
 }
@@ -4691,6 +4717,20 @@ fn aba_geral(ui: &mut egui::Ui, t: &Tokens, s: &mut Setup, tem_desenho: bool, ac
         egui::ComboBox::from_id_salt("ele-escopo-comandos").selected_text(s.escopo_comandos.nome()).width(230.0).show_ui(ui, |ui| {
             for e in ele::setup::EscopoComandos::TODOS {
                 ui.selectable_value(&mut s.escopo_comandos, e, e.nome());
+            }
+        });
+        ui.end_row();
+        ui.label("Fonte padrão dos textos e tabelas no desenho:").on_hover_text(
+            "Estilo de texto FREE_ELETRICA: tabelas, quadro de cargas, unifilar, vista frontal, legendas e tags. Atualizar tags e tabelas aplica a fonte nova",
+        );
+        egui::ComboBox::from_id_salt("ele-fonte-textos").selected_text(s.fonte_textos.nome()).width(230.0).show_ui(ui, |ui| {
+            for f in ele::setup::FonteTexto::TODAS {
+                let dica = if f.truetype() {
+                    "TrueType: acentos e ç em qualquer programa que tenha a fonte instalada"
+                } else {
+                    "SHX do AutoCAD: os acentos dependem do arquivo da fonte; sem ele, o CADCraft usa a fonte substituta"
+                };
+                ui.selectable_value(&mut s.fonte_textos, f, f.nome()).on_hover_text(dica);
             }
         });
         ui.end_row();

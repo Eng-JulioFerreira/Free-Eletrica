@@ -98,6 +98,23 @@ fn linhas_da_tabela(r: &ResumoQuadro) -> Vec<Vec<String>> {
     v
 }
 
+/// O estilo de texto de tudo o que o Free Elétrica escreve no desenho; a fonte dele vem das configurações.
+pub const ESTILO_TEXTO: &str = "FREE_ELETRICA";
+
+/// Cria o estilo [`ESTILO_TEXTO`] ou troca a fonte dele pela das configurações. Os textos já desenhados com ele
+/// mudam junto.
+pub fn garantir_estilo(doc: &mut Drawing, fonte: crate::setup::FonteTexto) {
+    let arquivo = fonte.arquivo();
+    match doc.text_styles.iter_mut().find(|s| s.name.eq_ignore_ascii_case(ESTILO_TEXTO)) {
+        Some(s) => {
+            if s.font != arquivo {
+                s.font = arquivo.into();
+            }
+        }
+        None => doc.text_styles.push(cadcraft_doc::TextStyle { name: ESTILO_TEXTO.into(), font: arquivo.into(), ..Default::default() }),
+    }
+}
+
 pub(crate) fn texto(valor: &str, em: [f64; 2], altura: f64, halign: HAlign) -> EntityKind {
     let p = Vec3::new(em[0], em[1], 0.0);
     EntityKind::Text(Text {
@@ -108,7 +125,7 @@ pub(crate) fn texto(valor: &str, em: [f64; 2], altura: f64, halign: HAlign) -> E
         rotation: 0.0,
         width_factor: 1.0,
         oblique: 0.0,
-        style: "Standard".into(),
+        style: crate::tabela::ESTILO_TEXTO.into(),
         halign,
         valign: VAlign::Middle,
     })
@@ -379,6 +396,7 @@ pub fn inserir(doc: &mut Drawing, analise: &Analise, setup: &Setup, quadro: Hand
         return Err("posição inválida".into());
     }
     let r = quadro::rotear(doc, analise, setup, quadro)?;
+    garantir_estilo(doc, setup.fonte_textos);
     gravar_bloco(doc, &r, if r.metros_por_unidade > 0.0 { r.metros_por_unidade } else { 1.0 });
     if let Some((h, _)) = tabelas(doc).into_iter().find(|(_, q)| *q == quadro)
         && let Some(mut e) = doc.model.get(h).map(|e| (**e).clone())

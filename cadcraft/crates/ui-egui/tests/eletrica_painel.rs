@@ -301,6 +301,7 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.get_by_label("Inicializar projeto no DXF atual");
     // A sequência das letras de comando: o escopo e o que vem depois do z.
     h.get_by_label("Escopo da sequência de comandos");
+    h.get_by_label("Fonte padrão dos textos e tabelas no desenho:");
     h.get_by_label("Padrão após a letra z");
     h.get_by_label("Condutores").click();
     h.run_steps(3);
@@ -803,7 +804,17 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.run_steps(3);
     assert_eq!(h.state().session.running.as_ref().map(|r| r.id.as_str()), Some("elecomando"));
     h.get_by_label("Comando atual:");
-    h.get_by_label("Interruptores selecionados: 0 | Luminárias selecionadas: 0 (sem interruptor)");
+    h.get_by_label("Interruptores: 0 | Luminárias: 0 -> Esquema: sem interruptor");
+    // Os clicados contam na barra (e ficam em destaque no desenho); Limpar seleção zera.
+    h.state_mut().run("eletrica.comando.selecao", json!({ "adicionar": [int, luz] })).unwrap();
+    h.run_steps(3);
+    h.get_by_label("Interruptores: 1 | Luminárias: 1 -> Esquema: Simples");
+    if let Ok(saida) = std::env::var("FREE_ELETRICA_PNG_COMANDO_SEL") {
+        h.render().unwrap().save(saida).unwrap();
+    }
+    h.get_by_label("Limpar seleção").click();
+    h.run_steps(3);
+    h.get_by_label("Interruptores: 0 | Luminárias: 0 -> Esquema: sem interruptor");
     h.get_by_label("Limpar seleção");
     h.get_by_label("Confirmar comando (Enter)");
     let uid = h.state().session.state().unwrap().uid;
@@ -811,7 +822,7 @@ fn paleta_ferramentas_e_fluxo_completo() {
     if let Ok(saida) = std::env::var("FREE_ELETRICA_PNG_COMANDO") {
         h.render().unwrap().save(saida).unwrap();
     }
-    h.get_by_label("Sair (ESC)").click();
+    h.get_by_label("X Sair (ESC)").click();
     h.run_steps(3);
     assert!(h.state().session.running.is_none(), "Sair encerra o comando");
     assert!(h.query_by_label("Comando atual:").is_none(), "a mini-barra some com o comando");

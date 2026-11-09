@@ -603,8 +603,9 @@ pub fn esquema_dos_interruptores(analise: &crate::Analise, interruptores: &[Hand
     match papeis_na_analise(analise, interruptores) {
         Ok(p) => match p.iter().filter(|(_, r)| *r == PapelInterruptor::Intermediario).count() {
             _ if p.len() == 1 => "Simples".into(),
-            0 => "Paralelo (three-way)".into(),
-            n => format!("Paralelo + {n} intermediário(s) (four-way)"),
+            0 => "Paralelo (Three-Way)".into(),
+            1 => "Paralelo + Intermediário (Four-Way)".into(),
+            n => format!("Paralelo + {n} Intermediários (Four-Way)"),
         },
         Err(e) => format!("não fecha: {e}"),
     }

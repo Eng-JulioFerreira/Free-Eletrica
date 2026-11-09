@@ -808,7 +808,7 @@ fn atributo_base(a: &Att, m: f64) -> Attrib {
             rotation: 0.0,
             width_factor: 1.0,
             oblique: 0.0,
-            style: "Standard".into(),
+            style: crate::tabela::ESTILO_TEXTO.into(),
             halign: HAlign::Left,
             valign: VAlign::Baseline,
         },
@@ -835,6 +835,7 @@ pub fn falta_base(doc: &Drawing) -> bool {
 /// Auto-bootstrap: põe no desenho as camadas e os blocos base que faltam. O que já existe (um bloco
 /// redesenhado pelo projetista, por exemplo) fica como está. Devolve se mudou algo.
 pub fn garantir_base(doc: &mut Drawing, setup: &crate::setup::Setup, metros: f64) -> bool {
+    crate::tabela::garantir_estilo(doc, setup.fonte_textos);
     if !falta_base(doc) {
         return false;
     }

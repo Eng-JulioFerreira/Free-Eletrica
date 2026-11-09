@@ -442,6 +442,7 @@ pub fn inserir_tabela(doc: &mut Drawing, analise: &Analise, setup: &Setup, pos: 
     let (metros, _) = setup.unidade.metros(doc.header.i64("INSUNITS", 0));
     let metros = if metros > 0.0 { metros } else { 1.0 };
     let m = levantar(doc, analise, setup);
+    crate::tabela::garantir_estilo(doc, setup.fonte_textos);
     gravar_tabela(doc, &m, metros);
     if let Some(h) = tabela_inserida(doc)
         && let Some(mut e) = doc.model.get(h).map(|e| (**e).clone())

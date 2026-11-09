@@ -268,6 +268,74 @@ fn proximo_circuito_e_proximo_comando() {
 }
 
 #[test]
+fn tags_de_retorno_sem_apostrofo_e_sem_textos_sobrepostos() {
+    // Os textos de cima não se tocam: em ordem, cada um termina antes do próximo começar.
+    let sem_sobrepor = |textos: &[(f64, String)]| {
+        let mut v: Vec<(f64, f64)> = textos
+            .iter()
+            .map(|(x, t)| {
+                let meia = fiacao::largura_texto(t, fiacao::ALTURA_TEXTO) / 2.0;
+                (x - meia, x + meia)
+            })
+            .collect();
+        v.sort_by(|a, b| a.0.total_cmp(&b.0));
+        v.windows(2).all(|p| p[0].1 <= p[1].0 + 1e-9)
+    };
+    // Três retornos do comando d (dois paralelos e o da luminária), só retornos no trecho: "1" à esquerda da
+    // primeira letra e "d", "d", "d", sem apóstrofo e sem sobreposição.
+    let k =
+        fiacao::Condutores { circuito: "1".into(), retornos: ["d", "d'", "d\""].map(String::from).into(), secao: Some(1.5), ..Default::default() };
+    let (passo, textos) = fiacao::arranjo_do_grupo(&k, &k.marcas());
+    assert_eq!(textos.iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>(), ["1", "d", "d", "d"]);
+    assert!(sem_sobrepor(&textos), "{textos:?}");
+    // Cada letra sobre a marca dela; o número encostado à esquerda da primeira.
+    assert!(textos.iter().skip(1).enumerate().all(|(i, (x, _))| perto(*x, i as f64 * passo, 1e-12)), "{textos:?}");
+    assert!(textos[0].0 < 0.0);
+    // Um circuito de dois dígitos sobre a fase, com um retorno ao lado: também não se tocam.
+    let k = fiacao::Condutores { circuito: "12".into(), fases: 1, retornos: ["a"].map(String::from).into(), secao: Some(1.5), ..Default::default() };
+    let (_, textos) = fiacao::arranjo_do_grupo(&k, &k.marcas());
+    assert_eq!(textos.iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>(), ["12", "a"]);
+    assert!(sem_sobrepor(&textos), "{textos:?}");
+    // Sem letras, o passo das marcas não muda.
+    let k = fiacao::Condutores { circuito: "1".into(), fases: 1, neutro: true, protecao: true, secao: Some(2.5), ..Default::default() };
+    assert!(perto(fiacao::arranjo_do_grupo(&k, &k.marcas()).0, 0.04, 1e-12));
+}
+
+#[test]
+fn textos_gerados_usam_o_estilo_com_a_fonte_das_configuracoes() {
+    let estilo = |d: &Drawing| d.text_styles.iter().find(|s| s.name == tabela::ESTILO_TEXTO).map(|s| s.font.clone());
+    let mut d = planta();
+    let q = quadro(&d);
+    let setup = Setup::default();
+    assert_eq!(setup.fonte_textos, setup::FonteTexto::Arial, "Arial é o padrão: tem os acentos e o ç");
+    let an = analisar(&d);
+    tabela::inserir(&mut d, &an, &setup, q, [0.0, 20.0]).unwrap();
+    assert_eq!(estilo(&d).as_deref(), Some("arial.ttf"));
+    unifilar::gerar(&mut d, &an, &setup, q, Some([0.0, 40.0])).unwrap();
+    frontal::gerar(&mut d, &an, &setup, q, Some([0.0, 60.0])).unwrap();
+    // Todos os textos das tabelas, do unifilar e da vista frontal usam o estilo; os acentos ficam no texto.
+    for prefixo in [tabela::PREFIXO, unifilar::PREFIXO, frontal::PREFIXO] {
+        let nome = format!("{prefixo}{}", q.hex());
+        let estilos: Vec<String> =
+            d.blocks[&nome].entities.iter().filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.style.clone()) } else { None }).collect();
+        assert!(!estilos.is_empty() && estilos.iter().all(|s| s == tabela::ESTILO_TEXTO), "{prefixo}: {estilos:?}");
+    }
+    assert!(textos_do_bloco(&d, &format!("{}{}", tabela::PREFIXO, q.hex())).iter().any(|t| t.0.contains("POTÊNCIA")));
+    // Outra fonte nas configurações: Atualizar tags e tabelas troca a do estilo, e tudo muda junto.
+    for (fonte, arquivo) in [
+        (setup::FonteTexto::Isocp, "isocp.shx"),
+        (setup::FonteTexto::Tahoma, "tahoma.ttf"),
+        (setup::FonteTexto::Calibri, "calibri.ttf"),
+        (setup::FonteTexto::Simplex, "simplex.shx"),
+    ] {
+        fiacao::regenerar(&mut d, &Setup { fonte_textos: fonte, ..Setup::default() }, None).unwrap();
+        assert_eq!(estilo(&d).as_deref(), Some(arquivo));
+        assert_eq!(d.text_styles.iter().filter(|s| s.name == tabela::ESTILO_TEXTO).count(), 1, "um estilo só");
+    }
+    assert!(setup::FonteTexto::Arial.truetype() && !setup::FonteTexto::Simplex.truetype());
+}
+
+#[test]
 fn aplicar_comando_segue_o_tipo_do_bloco_e_edita_o_comando() {
     use editar::PapelInterruptor as P;
     let setup = Setup::default();
@@ -333,7 +401,8 @@ fn aplicar_comando_segue_o_tipo_do_bloco_e_edita_o_comando() {
     // O esquema para a mini-barra, pelo tipo dos blocos.
     let an = analisar(&d);
     assert_eq!(editar::esquema_dos_interruptores(&an, &[simples]), "Simples");
-    assert!(editar::esquema_dos_interruptores(&an, &[p1, m1, p2]).starts_with("Paralelo + 1 intermediário"));
+    assert_eq!(editar::esquema_dos_interruptores(&an, &[p1, m1, p2]), "Paralelo + Intermediário (Four-Way)");
+    assert_eq!(editar::esquema_dos_interruptores(&an, &[p1, p2]), "Paralelo (Three-Way)");
     assert!(editar::esquema_dos_interruptores(&an, &[simples, p1]).starts_with("não fecha"));
     // Entrada ruim não grava nada.
     assert!(editar::aplicar_comando(&mut d, &setup, "", &[simples], &[]).is_err());

@@ -923,6 +923,20 @@ fn paralelos_e_intermediario_no_mesmo_comando_e_os_retornos() {
     assert_eq!(retornos(&s, s1, meio), (0, vec!["a\"".to_string(), "a'".to_string()]));
     assert_eq!(retornos(&s, meio, s2), (0, vec!["a\"".to_string(), "a'".to_string()]));
     assert_eq!(retornos(&s, s2, luz), (0, vec!["a".to_string()]));
+    // Nas tags, os retornos paralelos levam só a letra do comando: "1a", "a", sem apóstrofo.
+    s.execute("elefiacao", &json!({})).unwrap();
+    let doc = s.doc().unwrap();
+    let tags = free_eletrica::fiacao::tags(doc);
+    assert!(!tags.is_empty());
+    for (tag, _) in tags {
+        let EntityKind::Insert(i) = &doc.model.get(tag).unwrap().kind else { continue };
+        let textos: Vec<String> = doc.blocks[&i.block]
+            .entities
+            .iter()
+            .filter_map(|e| if let EntityKind::Text(t) = &e.kind { Some(t.value.clone()) } else { None })
+            .collect();
+        assert!(textos.iter().all(|t| !t.contains('\'') && !t.contains('"')), "{textos:?}");
+    }
 
     // A ordem escolhida vale sobre a distância: começando pelo paralelo de longe, a fase vai até ele e o retorno
     // às luzes sai do de perto.

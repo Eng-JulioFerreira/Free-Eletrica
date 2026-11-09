@@ -823,7 +823,7 @@ fn texto(valor: String, em: [f64; 2], altura: f64) -> EntityKind {
         rotation: 0.0,
         width_factor: 1.0,
         oblique: 0.0,
-        style: "Standard".into(),
+        style: crate::tabela::ESTILO_TEXTO.into(),
         halign: HAlign::Center,
         valign: VAlign::Middle,
     })
@@ -834,24 +834,64 @@ pub fn largura_texto(texto: &str, altura: f64) -> f64 {
     texto.replace("%%c", "Ø").chars().count() as f64 * crate::tabela::LARGURA_CARACTERE * altura
 }
 
-/// O que um grupo de marcas ocupa ao longo do trecho (m), a partir da primeira marca: as marcas,
-/// o número do circuito sobre a primeira, as letras sobre os retornos e a seção centrada embaixo.
+/// O espaço mínimo entre dois textos vizinhos de cima de uma tag (m).
+const ENTRE_TEXTOS: f64 = 0.012;
+
+/// A letra de um retorno como vai na tag: os retornos paralelos (`a'`, `a"`) são só a letra do comando.
+fn letra_limpa(l: &str) -> &str {
+    l.trim_end_matches(['\'', '"'])
+}
+
+/// O arranjo de um grupo de marcas, a partir da primeira (m): o passo entre as marcas e os textos de cima
+/// (centro, texto). A letra de cada retorno fica sobre a marca dele; o número do circuito, sobre a primeira
+/// marca ou, quando ela é um retorno, logo à esquerda da letra dela ("1d"). O passo cresce até os textos
+/// vizinhos não se tocarem.
+pub(crate) fn arranjo_do_grupo(k: &Condutores, grupo: &[(TipoCondutor, Option<&str>)]) -> (f64, Vec<(f64, String)>) {
+    let largura = |t: &str| largura_texto(t, ALTURA_TEXTO);
+    // O texto sobre cada marca, para medir o passo.
+    let sobre: Vec<Option<String>> = grupo
+        .iter()
+        .enumerate()
+        .map(|(i, (_, letra))| match (i, letra) {
+            (_, Some(l)) => Some(letra_limpa(l).to_string()),
+            (0, None) => Some(k.circuito.clone()),
+            (_, None) => None,
+        })
+        .collect();
+    let larg = |t: &Option<String>| t.as_deref().map_or(0.0, largura);
+    let passo = sobre
+        .windows(2)
+        .filter(|par| par.iter().all(Option::is_some))
+        .map(|par| par.iter().map(larg).sum::<f64>() / 2.0 + ENTRE_TEXTOS)
+        .fold(PASSO, f64::max);
+    let mut textos: Vec<(f64, String)> = Vec::new();
+    for (i, t) in sobre.into_iter().enumerate() {
+        let x = i as f64 * passo;
+        if let Some(t) = t {
+            if i == 0 && grupo.first().is_some_and(|(_, l)| l.is_some()) {
+                // O número à esquerda da letra do primeiro retorno, encostado nela.
+                let meio = x - (largura(&t) + largura(&k.circuito)) / 2.0;
+                textos.push((meio, k.circuito.clone()));
+            }
+            textos.push((x, t));
+        }
+    }
+    (passo, textos)
+}
+
+/// O que um grupo de marcas ocupa ao longo do trecho (m), a partir da primeira marca: as marcas, os
+/// textos de cima ([`arranjo_do_grupo`]) e a seção centrada embaixo.
 fn faixa_do_grupo(k: &Condutores, grupo: &[(TipoCondutor, Option<&str>)], setup: &Setup) -> (f64, f64) {
-    let vao = grupo.len().saturating_sub(1) as f64 * PASSO;
+    let (passo, textos) = arranjo_do_grupo(k, grupo);
+    let vao = grupo.len().saturating_sub(1) as f64 * passo;
     let (mut lo, mut hi) = (0.0f64, vao);
     let mut cobrir = |centro: f64, texto: &str| {
         let meia = largura_texto(texto, ALTURA_TEXTO) / 2.0;
         lo = lo.min(centro - meia);
         hi = hi.max(centro + meia);
     };
-    for (i, (_, letra)) in grupo.iter().enumerate() {
-        let x = i as f64 * PASSO;
-        match (i, letra) {
-            (0, Some(l)) => cobrir(x, &format!("{}{l}", k.circuito)),
-            (0, None) => cobrir(x, &k.circuito),
-            (_, Some(l)) => cobrir(x, l),
-            (_, None) => {}
-        }
+    for (x, t) in &textos {
+        cobrir(*x, t);
     }
     if let Some(t) = k.secao.filter(|x| !setup.omitida(*x)).and_then(|_| k.texto_secao()) {
         cobrir(vao / 2.0, &t);
@@ -872,7 +912,7 @@ fn bloco_da_tag(
     setup: &Setup,
 ) -> Block {
     let mut b = Block::new(nome);
-    let (passo, entre, acima) = (PASSO / m, ENTRE_CIRCUITOS / m, AFASTAMENTO_TEXTO / m);
+    let (entre, acima) = (ENTRE_CIRCUITOS / m, AFASTAMENTO_TEXTO / m);
     let grupos: Vec<Vec<(TipoCondutor, Option<&str>)>> = circuitos.iter().map(Condutores::marcas).collect();
     // Cada grupo ocupa a largura das marcas ou dos textos dele (o que for maior), para os textos
     // de circuitos vizinhos não ficarem um sobre o outro.
@@ -892,7 +932,13 @@ fn bloco_da_tag(
         let mut s = borda - lo / m;
         borda += (hi - lo) / m + entre;
         let inicio = s;
-        for (i, (tipo, letra)) in grupo.iter().enumerate() {
+        let (passo, textos) = arranjo_do_grupo(k, grupo);
+        let passo = passo / m;
+        // Em cima: o número do circuito e a letra de cada retorno, sem os apóstrofos dos paralelos.
+        for (x, t) in textos {
+            pecas.push(texto(t, [inicio + x / m, acima], ALTURA_TEXTO / m));
+        }
+        for (tipo, _) in grupo {
             pecas.push(EntityKind::Insert(Insert {
                 block: tipo.bloco().into(),
                 insert: Vec3::new(s, 0.0, 0.0),
@@ -904,17 +950,6 @@ fn bloco_da_tag(
                 col_spacing: 0.0,
                 row_spacing: 0.0,
             }));
-            // Em cima: o número do circuito sobre a primeira marca e a letra sobre cada
-            // retorno (lado a lado leem "1b").
-            let rotulo = match (i, letra) {
-                (0, Some(l)) => Some(format!("{}{l}", k.circuito)),
-                (0, None) => Some(k.circuito.clone()),
-                (_, Some(l)) => Some(l.to_string()),
-                (_, None) => None,
-            };
-            if let Some(r) = rotulo {
-                pecas.push(texto(r, [s, acima], ALTURA_TEXTO / m));
-            }
             s += passo;
         }
         // Embaixo do grupo: a seção, quando não omitida.
@@ -1073,6 +1108,7 @@ fn ajustar_chamada(doc: &Drawing, eletroduto: Handle, c: Chamada, m: f64) -> Cha
 /// `tag`, o início da base. No modo direto, `tag` não conta. Uma tag que já existe passa para essa
 /// geometria. Devolve a tag.
 pub fn criar_tag(doc: &mut Drawing, setup: &Setup, eletroduto: Handle, modo: ModoTag, ancora: [f64; 2], tag: [f64; 2]) -> Result<Handle, String> {
+    crate::tabela::garantir_estilo(doc, setup.fonte_textos);
     let tag = if modo == ModoTag::Direto { ancora } else { tag };
     if !ancora.iter().chain(tag.iter()).all(|v| v.is_finite()) {
         return Err("ponto inválido".into());
@@ -1161,6 +1197,7 @@ pub fn regenerar(doc: &mut Drawing, setup: &Setup, criar: Option<&[Handle]>) -> 
     crate::eletroduto::aparar(doc, setup, m, None);
     crate::biblioteca::encaixar_textos_de_luz(doc, None);
     let analise = crate::analisar(doc);
+    crate::tabela::garantir_estilo(doc, setup.fonte_textos);
     let (trechos, soltos, avisos) = todos_os_trechos(doc, &analise, setup);
     let mut reg = Regeneracao { avisos, ..Regeneracao::default() };
     reg.apagadas += apagar_marcas_antigas(doc);
