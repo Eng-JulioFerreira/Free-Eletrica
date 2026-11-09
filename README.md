@@ -10,12 +10,12 @@ a prancha. Software livre, em português.
 ## Baixar (Windows e Linux)
 
 **[Página da versão mais recente](https://github.com/Eng-JulioFerreira/Free-Eletrica/releases/latest)**, com os pacotes
-das duas plataformas. Versão atual: **v0.3.0** ([novidades](CHANGELOG.md)).
+das duas plataformas. Versão atual: **v0.4.0** ([novidades](CHANGELOG.md)).
 
 | Sistema | Arquivo | Como usar |
 | :--- | :--- | :--- |
-| **Windows** 10 e 11, 64 bits | [`FreeEletrica-v0.3.0-win64.zip`](https://github.com/Eng-JulioFerreira/Free-Eletrica/releases/download/v0.3.0/FreeEletrica-v0.3.0-win64.zip) | Extraia em qualquer pasta e clique duas vezes em `FreeEletrica.exe`. |
-| **Linux** x86_64 (Ubuntu 22.04 ou mais novo, e distribuições equivalentes) | [`FreeEletrica-v0.3.0-x86_64.AppImage`](https://github.com/Eng-JulioFerreira/Free-Eletrica/releases/download/v0.3.0/FreeEletrica-v0.3.0-x86_64.AppImage) | Marque como executável (`chmod +x FreeEletrica-v0.3.0-x86_64.AppImage`) e abra. |
+| **Windows** 10 e 11, 64 bits | [`FreeEletrica-v0.4.0-win64.zip`](https://github.com/Eng-JulioFerreira/Free-Eletrica/releases/download/v0.4.0/FreeEletrica-v0.4.0-win64.zip) | Extraia em qualquer pasta e clique duas vezes em `FreeEletrica.exe`. |
+| **Linux** x86_64 (Ubuntu 22.04 ou mais novo, e distribuições equivalentes) | [`FreeEletrica-v0.4.0-x86_64.AppImage`](https://github.com/Eng-JulioFerreira/Free-Eletrica/releases/download/v0.4.0/FreeEletrica-v0.4.0-x86_64.AppImage) | Marque como executável (`chmod +x FreeEletrica-v0.4.0-x86_64.AppImage`) e abra. |
 
 Não precisa instalar nada: nem Rust, nem compilador, nem scripts. No Windows, na primeira vez, pode aparecer o aviso de
 aplicativo desconhecido: clique em **Mais informações** e **Executar assim mesmo**. Veja o
