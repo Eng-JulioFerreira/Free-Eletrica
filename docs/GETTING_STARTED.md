@@ -23,7 +23,7 @@ As ferramentas do Free Elétrica estão na aba **Instalações**.
 Abra sua planta em DXF ou comece um desenho novo e clique em **Configurações...**, em **Projeto e Inspeção**.
 
 - **Unidade:** trabalhe com **1 unidade = 1 metro** (escala 1:50 na impressão). Tabelas, tags e símbolos são feitos nessa
-  medida.
+  medida. Um desenho novo já nasce em metros (`INSUNITS` 6, `MEASUREMENT` 1), não em polegadas.
 - **Alturas:** pé-direito e as alturas baixa (tomadas, 0,30 m), média (interruptores, 1,20 m) e alta (2,10 m). Um ponto na
   altura padrão não escreve nada na planta; em outra altura, aparece como `h=1,45m`.
 - **Critérios:** temperatura ambiente, quedas de tensão admissíveis, método de instalação padrão e critério do disjuntor.
@@ -31,7 +31,13 @@ Abra sua planta em DXF ou comece um desenho novo e clique em **Configurações..
 - **Demanda / Concessionárias:** a tabela da sua concessionária e o tipo de edificação. De fábrica vem a da Equatorial
   (NT.00001.EQTL); para outra, use **+ Cadastrar / Criar Nova Tabela de Demanda**.
 
-As camadas e os blocos base entram sozinhos na primeira ferramenta que você usar.
+**Famílias padrão:** com **Configurações... > Geral > Carregar biblioteca de famílias padrão automaticamente ao iniciar
+um novo projeto** marcada (o padrão), um desenho novo já vem com as famílias de fábrica (NBR 5444 e telecom), que aparecem
+juntas em **Blocos e famílias...** e em **Inserir pontos**. Em qualquer desenho, o botão **📦 Carregar / Restaurar Famílias
+Padrão** (nas Configurações, em Blocos e famílias e na mini-barra de Inserir pontos, quando não há família) traz as que
+faltam, as excluídas e devolve ao tamanho certo, em metros, as que foram feitas com o desenho em outra unidade (as
+"gigantes" de um desenho que estava em polegadas). As ferramentas nunca carregam famílias escondido; elas só criam as
+camadas e as marcas da fiação que faltam.
 
 ## Passo 3: Inserindo pontos e empilhando na parede (`ELEPONTOS`)
 

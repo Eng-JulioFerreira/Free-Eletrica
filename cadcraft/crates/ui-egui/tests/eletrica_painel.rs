@@ -298,7 +298,10 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.get_by_label("Altura média padrão");
     h.get_by_label("Geral").click();
     h.run_steps(3);
-    h.get_by_label("Inicializar projeto no DXF atual");
+    // As famílias padrão: a opção do projeto novo (marcada de fábrica) e o botão de carregar/restaurar.
+    h.get_by_label("Carregar biblioteca de famílias padrão automaticamente ao iniciar um novo projeto");
+    h.get_by_label("📦 Carregar / Restaurar Famílias Padrão (NBR 5444 / Telecom)");
+    assert!(free_eletrica::setup::atual().carregar_familias_padrao);
     h.get_by_label("Fonte padrão dos textos e tabelas no desenho:");
     // A sequência das letras de comando fica na aba Comandos.
     assert!(h.query_by_label("Escopo da sequência de comandos").is_none());
@@ -622,7 +625,8 @@ fn paleta_ferramentas_e_fluxo_completo() {
     // Blocos e famílias: o botão de criar pede um nome e cai no editor com a família pronta.
     h.get_by_label("Blocos e famílias...").click();
     h.run_steps(3);
-    h.get_by_label("+ Criar novo bloco elétrico");
+    h.get_by_label("+ Criar Nova Família");
+    h.get_by_label("📦 Carregar Famílias Padrão");
     assert!(h.query_all_by_label("Editar").count() >= 1);
     assert!(h.query_all_by_label("Inserir").count() >= 1);
     // Imagem da janela de blocos, quando pedida.
@@ -634,7 +638,7 @@ fn paleta_ferramentas_e_fluxo_completo() {
     h.run_steps(2);
     h.get(campo_nome()).type_text("TOMADA-DUPLA");
     h.run_steps(3);
-    h.get_by_label("+ Criar novo bloco elétrico").click();
+    h.get_by_label("+ Criar Nova Família").click();
     h.run_steps(3);
     h.get_by_label("Propriedades da Família");
     h.get_by_label("Bloco: TOMADA-DUPLA");
@@ -1028,4 +1032,18 @@ fn paleta_ferramentas_e_fluxo_completo() {
     if let Ok(saida) = std::env::var("FREE_ELETRICA_PNG") {
         h.render().unwrap().save(saida).unwrap();
     }
+
+    // Arquivo > Novo: o CADCraft cria em polegadas, e o desenho aparece em metros, já com as famílias padrão (que
+    // Blocos e famílias e Inserir pontos leem do mesmo desenho), e sem alterações para salvar.
+    h.state_mut().run("new", json!({})).unwrap();
+    h.run_steps(3);
+    let app = h.state();
+    let doc = app.session.doc().unwrap();
+    assert_eq!((doc.header.i64("INSUNITS", 0), doc.header.i64("MEASUREMENT", 0)), (6, 1));
+    assert!(!free_eletrica::biblioteca::blocos(doc).is_empty());
+    assert!(!app.session.state().unwrap().is_dirty(), "o desenho novo continua sem alterações");
+    // Um desenho já mexido não é tocado de novo.
+    h.state_mut().run("eletrica.familia.excluir", json!({ "bloco": "QDC" })).unwrap();
+    h.run_steps(3);
+    assert!(free_eletrica::biblioteca::blocos(h.state().session.doc().unwrap()).iter().all(|b| b.nome != "QDC"));
 }

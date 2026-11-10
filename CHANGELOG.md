@@ -1,5 +1,15 @@
 # Novidades do Free Elétrica
 
+## Próxima versão
+
+- **Desenho novo em metros:** `INSUNITS` 6 e `MEASUREMENT` 1 (1 un = 1 m) em vez das polegadas do CADCraft, sem marcar o
+  desenho como alterado.
+- **Famílias padrão sob controle:** a opção "Carregar biblioteca de famílias padrão automaticamente ao iniciar um novo
+  projeto" (marcada de fábrica) e o botão **📦 Carregar / Restaurar Famílias Padrão** nas Configurações, em Blocos e
+  famílias e na mini-barra de Inserir pontos. O Inserir pontos não carrega mais famílias escondido.
+- **Famílias gigantes corrigidas:** as de fábrica feitas com o desenho em polegadas voltam ao tamanho em metros, com os
+  atributos dos pontos já inseridos e as marcas da fiação.
+
 ## v0.4.0
 
 ### Circuitos e comandos

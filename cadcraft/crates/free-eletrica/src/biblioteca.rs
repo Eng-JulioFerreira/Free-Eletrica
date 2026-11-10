@@ -866,6 +866,150 @@ fn atributo_base(a: &Att, m: f64) -> Attrib {
     }
 }
 
+/// A maior dimensão (m) do desenho de fábrica de um bloco base, sem os atributos.
+fn tamanho_de_fabrica(nome: &str) -> Option<f64> {
+    let (pecas, _) = definicao_base(nome, "220V")?;
+    let mut b = Block::new(nome);
+    // Cada peça com o seu handle: o bloco guarda as entidades por handle.
+    for (i, p) in pecas.iter().enumerate() {
+        b.entities.push(Entity::new(Handle(i as u64 + 1), entidade_da_peca(p, &|v| v)));
+    }
+    let (min, max) = crate::legenda::caixa_do_desenho(&b)?;
+    Some((max[0] - min[0]).max(max[1] - min[1]))
+}
+
+/// As razões entre unidades de desenho (m/pol, mm/pol, m/mm, m/cm, m/pé...): um bloco de fábrica criado numa
+/// unidade e lido noutra fica maior ou menor por uma delas.
+const RAZOES_DE_UNIDADE: [f64; 9] = [1.0 / 0.0254, 25.4, 2.54, 1000.0, 100.0, 10.0, 1.0 / 0.3048, 12.0, 304.8];
+
+/// Quantas vezes o bloco de fábrica `nome` do desenho é maior que o de fábrica, medido em metros (`m`: metros
+/// por unidade do desenho), quando a diferença é uma troca de unidade (39,37 de um desenho que estava em
+/// polegadas e passou para metros; 1000 de milímetros...), para mais ou para menos. `None`: o bloco não existe,
+/// não é de fábrica ou está na escala certa. Um símbolo redesenhado pelo projetista noutro tamanho fica.
+pub fn escala_errada(doc: &Drawing, nome: &str, m: f64) -> Option<f64> {
+    let b = doc.blocks.get(nome)?;
+    let esperado = tamanho_de_fabrica(nome)?;
+    let (min, max) = crate::legenda::caixa_do_desenho(b)?;
+    let real = (max[0] - min[0]).max(max[1] - min[1]) * m;
+    if !(esperado > 1e-9 && real.is_finite() && real > 1e-12) {
+        return None;
+    }
+    let r = real / esperado;
+    let troca = |k: f64| (r / k - 1.0).abs() < 0.05 || (r * k - 1.0).abs() < 0.05;
+    RAZOES_DE_UNIDADE.iter().any(|k| troca(*k)).then_some(r)
+}
+
+/// Leva os textos das inserções do bloco `nome` para a escala `k` em torno do ponto de inserção de cada uma:
+/// depois de refazer a definição numa escala diferente, os atributos acompanham o símbolo. Devolve quantas.
+fn reescalar_insercoes(doc: &mut Drawing, nome: &str, k: f64) -> usize {
+    if !(k.is_finite() && k > 0.0) {
+        return 0;
+    }
+    let alvos: Vec<Entity> =
+        doc.model.iter().filter(|e| matches!(&e.kind, EntityKind::Insert(i) if i.block.eq_ignore_ascii_case(nome))).map(|e| (**e).clone()).collect();
+    let n = alvos.len();
+    for mut e in alvos {
+        let EntityKind::Insert(ins) = &mut e.kind else { continue };
+        let base = ins.insert;
+        let perto = |p: Vec3| Vec3::new(base.x + (p.x - base.x) * k, base.y + (p.y - base.y) * k, p.z);
+        for a in &mut ins.attribs {
+            a.text.insert = perto(a.text.insert);
+            a.text.align_pt = a.text.align_pt.map(perto);
+            a.text.height *= k;
+        }
+        doc.model.replace(e);
+    }
+    n
+}
+
+/// Prepara o desenho para as ferramentas sem trazer famílias: o estilo de texto, as camadas, as marcas da
+/// fiação e os blocos de fábrica que já estão no desenho, corrigidos de escala e de versão. Nenhuma família nova
+/// entra: isso é do [`garantir_base`] (o "Carregar Famílias Padrão" e o desenho novo). Devolve se mudou algo.
+pub fn garantir_camadas(doc: &mut Drawing, setup: &crate::setup::Setup, metros: f64) -> bool {
+    crate::tabela::garantir_estilo(doc, &setup.fonte_textos);
+    let m = if metros > 0.0 { metros } else { 1.0 };
+    let mut mudou = false;
+    for (nome, cor) in [(CAMADA_PONTOS, 7), (CAMADA_QUADROS, 2), (CAMADA_DADOS, 5)] {
+        if doc.ensure_layer(nome)
+            && let Some(l) = doc.layer_mut(nome)
+        {
+            l.color = Color::Index(cor);
+            mudou = true;
+        }
+    }
+    let faltava = [crate::fiacao::CAMADA, crate::eletroduto::CAMADA_TETO, crate::eletroduto::CAMADA_PISO].iter().any(|c| doc.layer(c).is_none())
+        || crate::fiacao::TipoCondutor::TODOS.iter().any(|t| !doc.blocks.contains_key(t.bloco()));
+    for i in crate::rota::Instalacao::TODAS {
+        crate::eletroduto::garantir_camada(doc, i);
+    }
+    crate::fiacao::garantir_blocos(doc, m);
+    mudou |= faltava;
+    mudou |= normalizar_escala(doc, setup, m) > 0;
+    mudou
+}
+
+/// [`garantir_camadas`] mudaria o desenho: falta o estilo (ou a fonte dele mudou), uma camada ou uma marca da
+/// fiação, ou um bloco de fábrica está noutra escala. Só lê.
+pub fn precisa_preparar(doc: &Drawing, setup: &crate::setup::Setup, metros: f64) -> bool {
+    let m = if metros > 0.0 { metros } else { 1.0 };
+    let estilo = doc
+        .text_styles
+        .iter()
+        .find(|s| s.name.eq_ignore_ascii_case(crate::tabela::ESTILO_TEXTO))
+        .is_none_or(|s| s.font != setup.fonte_textos.arquivo());
+    let camadas = [CAMADA_PONTOS, CAMADA_QUADROS, CAMADA_DADOS, crate::fiacao::CAMADA]
+        .iter()
+        .copied()
+        .chain(crate::rota::Instalacao::TODAS.iter().map(|i| crate::eletroduto::camada(*i)))
+        .any(|c| doc.layer(c).is_none());
+    estilo || camadas || !crate::fiacao::marcas_em_dia(doc, m) || BLOCOS_BASE.iter().any(|n| escala_errada(doc, n, m).is_some())
+}
+
+/// Refaz, na escala do desenho, os blocos de fábrica que estão nele numa escala de unidade errada, e leva os
+/// atributos das inserções junto. Devolve quantos refez.
+pub fn normalizar_escala(doc: &mut Drawing, setup: &crate::setup::Setup, m: f64) -> usize {
+    let tensao = format!("{}V", crate::ponto::br(setup.sistema.tensao_fn()));
+    let mut n = 0;
+    for nome in BLOCOS_BASE {
+        let Some(r) = escala_errada(doc, nome, m) else { continue };
+        criar_bloco_base(doc, nome, &tensao, m);
+        reescalar_insercoes(doc, nome, 1.0 / r);
+        n += 1;
+    }
+    if n > 0 {
+        encaixar_textos_de_luz(doc, None);
+    }
+    n
+}
+
+/// Cria o bloco de fábrica `nome`, com a família dele, quando o desenho ainda não o tem (e ele não foi excluído).
+/// Para quem pede um bloco de fábrica pelo nome; as outras famílias não entram. Devolve se criou.
+pub fn garantir_bloco_de_fabrica(doc: &mut Drawing, setup: &crate::setup::Setup, nome: &str, metros: f64) -> bool {
+    let Some(nome) = BLOCOS_BASE.iter().copied().find(|n| n.eq_ignore_ascii_case(nome.trim())) else { return false };
+    if doc.blocks.contains_key(nome) || familia::excluida(doc, nome) {
+        return false;
+    }
+    let m = if metros > 0.0 { metros } else { 1.0 };
+    let tensao = format!("{}V", crate::ponto::br(setup.sistema.tensao_fn()));
+    criar_bloco_base(doc, nome, &tensao, m);
+    true
+}
+
+/// Põe o desenho em metros, 1 unidade = 1 m: `$INSUNITS` 6 (metros, a unidade de inserção dos blocos) e
+/// `$MEASUREMENT` 1 (métrico). Devolve se mudou algo.
+pub fn desenho_em_metros(doc: &mut Drawing) -> bool {
+    let mudou = doc.header.i64("INSUNITS", 0) != 6 || doc.header.i64("MEASUREMENT", 0) != 1;
+    doc.header.set_i64("INSUNITS", 6);
+    doc.header.set_i64("MEASUREMENT", 1);
+    mudou
+}
+
+/// O desenho acabou de ser criado pelo CADCraft e ainda não foi tocado: nada no modelo, nenhum bloco de ponto e
+/// a unidade de fábrica do CADCraft (polegadas). É ele que o Free Elétrica põe em metros ao abrir.
+pub fn desenho_em_branco(doc: &Drawing) -> bool {
+    doc.model.is_empty() && doc.header.i64("INSUNITS", 0) == 1 && doc.header.i64("MEASUREMENT", 0) == 0 && blocos(doc).is_empty()
+}
+
 /// Falta alguma camada ou bloco base no desenho.
 pub fn falta_base(doc: &Drawing) -> bool {
     BLOCOS_BASE.iter().any(|n| !doc.blocks.contains_key(*n) && !familia::excluida(doc, n))
@@ -881,10 +1025,12 @@ pub fn falta_base(doc: &Drawing) -> bool {
 /// redesenhado pelo projetista, por exemplo) fica como está. Devolve se mudou algo.
 pub fn garantir_base(doc: &mut Drawing, setup: &crate::setup::Setup, metros: f64) -> bool {
     crate::tabela::garantir_estilo(doc, &setup.fonte_textos);
-    if !falta_base(doc) {
-        return false;
-    }
     let m = if metros > 0.0 { metros } else { 1.0 };
+    // Os de fábrica feitos noutra unidade (um desenho em polegadas que passou para metros) voltam ao tamanho.
+    let escala = normalizar_escala(doc, setup, m) > 0;
+    if !falta_base(doc) {
+        return escala;
+    }
     let tensao = format!("{}V", crate::ponto::br(setup.sistema.tensao_fn()));
     for (nome, cor) in [(CAMADA_PONTOS, 7), (CAMADA_QUADROS, 2), (CAMADA_DADOS, 5)] {
         if doc.ensure_layer(nome)

@@ -329,23 +329,51 @@ fn clicar_no_meio_do_eletroduto_divide_com_caixa() {
 }
 
 #[test]
-fn desenho_virgem_ganha_camadas_e_blocos_sem_perguntar() {
+fn desenho_novo_em_metros_e_familias_so_quando_pedidas() {
+    let _setup = trava_setup();
+    // O desenho que o CADCraft cria nasce em polegadas; o do Free Elétrica passa para metros, com as famílias, e
+    // continua sem alterações (fechar não pergunta) e sem passo de desfazer.
+    let mut s = Session::new();
+    assert_eq!(s.doc().unwrap().header.i64("INSUNITS", 0), 1);
+    let r = s.execute("eletrica.desenho.novo", &json!({})).unwrap();
+    assert_eq!((r["metros"].as_bool(), r["familias"].as_bool()), (Some(true), Some(true)));
+    let doc = s.doc().unwrap();
+    assert_eq!((doc.header.i64("INSUNITS", 0), doc.header.i64("MEASUREMENT", 0)), (6, 1));
+    assert!(r["blocos"].as_u64().unwrap() >= 20, "{r}");
+    assert!(!s.state().unwrap().is_dirty() && s.state().unwrap().undo.is_empty());
+    // O símbolo em metros: o ponto de luz tem 0,20 m de diâmetro, não 0,20 polegada nem 7,9 m.
+    let m = s.execute("eletrica.blocos", &json!({})).unwrap();
+    assert!(m.as_array().unwrap().iter().any(|b| b["nome"] == "ILU-OCT"));
+    // Sem a opção, só a unidade.
+    let mut s2 = Session::new();
+    let r = s2.execute("eletrica.desenho.novo", &json!({ "familias": false })).unwrap();
+    assert_eq!((r["familias"].as_bool(), r["blocos"].as_u64()), (Some(false), Some(0)));
+    assert!(s2.execute("eletrica.desenho.novo", &json!({ "familias": 3 })).is_err());
+
     let mut s = Session::new();
     s.open_drawing(Drawing::new_metric(), "Virgem", None);
     // Consultar não muda o desenho.
     assert!(s.execute("eletrica.blocos", &json!({})).unwrap().as_array().unwrap().is_empty());
-    // Inserir já traz tudo, sem template.
+    // Inserir um bloco de fábrica pelo nome traz só ele, com as camadas; as outras famílias não entram escondidas.
     let r = s.execute("eleponto", &json!({ "bloco": "QDG", "pontos": [[0.0, 0.0]], "valores": { "TAG": "QD-1" } })).unwrap();
     assert_eq!(r["pontos"].as_array().unwrap().len(), 1);
     let doc = s.doc().unwrap();
     for c in ["ELE-PONTOS", "ELE-QUADROS", "ELE-FIACAO", "ELE-ELETRODUTO-TETO", "ELE-ELETRODUTO-PISO"] {
         assert!(doc.layer(c).is_some(), "{c}");
     }
+    assert_eq!(s.execute("eletrica.blocos", &json!({})).unwrap().as_array().unwrap().len(), 1);
+    // O Carregar Famílias Padrão traz o resto, uma vez.
+    assert_eq!(s.execute("eletrica.bootstrap", &json!({})).unwrap()["mudou"], true);
     assert_eq!(s.execute("eletrica.bootstrap", &json!({})).unwrap()["mudou"], false);
-    // Interativo: começar o comando prepara outro desenho virgem e o primeiro clique já insere.
+    // Interativo num desenho sem famílias: o ELEPONTO não carrega nada escondido e espera o botão da mini-barra.
     s.open_drawing(Drawing::new_metric(), "Virgem 2", None);
     s.start("eleponto").unwrap();
-    assert!(s.prompt_text().contains("Ponto de inserção"), "{}", s.prompt_text());
+    assert!(s.running.is_some(), "o comando fica aberto, com a mini-barra");
+    s.input(Input::Point(Vec2::new(0.5, 0.5))).unwrap();
+    assert!(s.execute("eletrica.blocos", &json!({})).unwrap().as_array().unwrap().is_empty(), "nada entrou escondido");
+    assert!(s.execute("eletrica.analisar", &json!({})).unwrap()["pontos"].as_array().unwrap().is_empty());
+    // Carregadas pela mini-barra, o próximo clique já insere o primeiro bloco.
+    s.execute("eletrica.bootstrap", &json!({})).unwrap();
     s.input(Input::Point(Vec2::new(0.5, 0.5))).unwrap();
     assert_eq!(s.execute("eletrica.analisar", &json!({})).unwrap()["pontos"][0]["bloco"], "TOM-SIM-BAIXA");
     // Trocar de bloco digitando.
@@ -382,6 +410,8 @@ fn barra_muda_o_modelo_enquanto_o_comando_corre_e_tab_gira() {
             .collect();
         insercoes[i]
     };
+    // As famílias padrão vêm pelo Carregar Famílias Padrão; o ELEPONTO não as traz escondido.
+    s.execute("eletrica.bootstrap", &json!({})).unwrap();
     s.start("eleponto").unwrap();
     s.execute("eletrica.ponto.modelo", &json!({ "bloco": "TOM-SIM-BAIXA", "valores": { "ALTURA": "1,20", "POTENCIA": "300VA" } })).unwrap();
     assert!(s.running.is_some(), "o comando continua");

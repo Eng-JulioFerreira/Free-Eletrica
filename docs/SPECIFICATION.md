@@ -75,6 +75,19 @@ O tipo de linha e a cor do perfil ficam na própria entidade do eletroduto. O di
 As configurações do Setup, incluindo PE compartilhado, FCA fixo, catálogos, perfis e tabelas de demanda próprias, ficam nas
 preferências do programa, não no DXF.
 
+### Desenho novo e famílias padrão
+
+O CADCraft cria todo desenho em polegadas (`INSUNITS` 1). O Free Elétrica põe em metros, uma vez, o desenho que acabou
+de nascer (sem arquivo, vazio e ainda em polegadas): `INSUNITS` 6 e `MEASUREMENT` 1 (`eletrica.desenho.novo`, sem
+contar como mudança). Com `carregarFamiliasPadrao` (o padrão), a biblioteca de famílias entra junto. Um DXF aberto
+nunca é tocado.
+
+As ferramentas só preparam o que precisam (`biblioteca::garantir_camadas`: estilo, camadas e marcas da fiação) e nunca
+trazem famílias; um bloco de fábrica pedido pelo nome no `eleponto` entra sozinho. `eletrica.bootstrap` carrega a
+biblioteca. Um bloco de fábrica feito noutra unidade (o tamanho dele em metros difere do de fábrica por uma razão de
+unidade: 39,37, 25,4, 1000...) é refeito na escala do desenho, com os atributos das inserções reescalados; um símbolo
+redesenhado pelo projetista noutro tamanho fica.
+
 ### Fonte dos textos
 
 Tudo o que o programa escreve no desenho (tabelas, unifilar, vista frontal, legendas, tags, lista de materiais e os
@@ -136,7 +149,7 @@ próprio `CommandSpec`.
 
 | Grupo | Comandos |
 | :--- | :--- |
-| Pontos | `eleponto`, `eletrica.ponto.modelo`, `eletrica.ponto.altura`, `eletrica.ponto.tensao`, `eletrica.ponto.demanda`, `eletrica.ponto.excluir`, `eletrica.blocos`, `eletrica.bootstrap` |
+| Pontos | `eleponto`, `eletrica.ponto.modelo`, `eletrica.ponto.altura`, `eletrica.ponto.tensao`, `eletrica.ponto.demanda`, `eletrica.ponto.excluir`, `eletrica.blocos`, `eletrica.bootstrap`, `eletrica.desenho.novo` |
 | Famílias | `eletrica.familia.ler`, `.definir`, `.geometria`, `.atributos`, `elefamilia_conector` |
 | Atributos | `eletrica.atributos`, `eletrica.atributo.definir` |
 | Circuitos | `elecircuito`, `eleremoverponto`, `elecomando`, `eletrica.comando.selecao` (a mini-barra do ELECOMANDO), `eletrica.circuito.selecao` (a do ELECIRCUITO), `eletrica.circuito.criar`, `.definir`, `.descrever`, `.juntar`, `.excluir`, `.alvo` |

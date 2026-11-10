@@ -1882,11 +1882,33 @@ pub fn janelas(app: &mut CadApp, ctx: &egui::Context) {
     executar(app, acoes);
 }
 
+/// Os desenhos (pelo `uid`) que já passaram pelo [`preparar_desenho_novo`]: cada um, uma vez só.
+static DESENHOS_VISTOS: Mutex<std::collections::BTreeSet<u64>> = Mutex::new(std::collections::BTreeSet::new());
+
+/// Um desenho que o CADCraft acabou de criar (Novo, ou o Drawing1 da abertura), ainda em branco e em polegadas,
+/// passa para metros (1 un = 1 m) e, com a opção das Configurações, já recebe as famílias padrão, que aparecem
+/// juntas em Blocos e famílias e em Inserir pontos. Sem caminho de arquivo: um DXF aberto nunca é tocado.
+fn preparar_desenho_novo(app: &mut CadApp) {
+    let Ok(st) = app.session.state() else { return };
+    let novo = trava(&DESENHOS_VISTOS).insert(st.uid);
+    if novo && st.path.is_none() && ele::biblioteca::desenho_em_branco(&st.doc) {
+        acao_unica(app, "eletrica.desenho.novo", json!({}));
+    }
+}
+
+/// Roda um comando do motor e manda o erro, se houver, para a barra de status.
+fn acao_unica(app: &mut CadApp, id: &'static str, p: Value) {
+    if let Err(e) = app.run(id, p) {
+        app.set_status(format!("Free Elétrica: {e}"));
+    }
+}
+
 // ---------------------------------------------------------------- zonas 2 e 4: sobre o desenho
 
 /// Desenha, sobre o desenho no espaço do modelo, o destaque do circuito, os halos da inspeção e a
 /// barra de contexto do comando em andamento.
 pub fn sobre_canvas(app: &mut CadApp, ui: &mut egui::Ui, painter: &egui::Painter, xf: &crate::canvas::Xf) {
+    preparar_desenho_novo(app);
     let (inspecao, destaque, marca) = {
         let j = trava(&JANELAS);
         (j.inspecao, j.destaque.clone().filter(|_| j.abertas.contains(&Qual::Cargas)), j.marca.filter(|_| j.abertas.contains(&Qual::Dimensionar)))
@@ -2145,6 +2167,15 @@ fn resumo_do_bloco(b: &ele::biblioteca::BlocoPonto, s: &Setup) -> String {
 }
 
 fn barra_ponto(ui: &mut egui::Ui, uid: u64, st: &Estado, s: &Setup, filtro: &mut FiltroPontos, busca: &mut String, acoes: &mut Vec<Acao>) {
+    // Sem família no desenho, nada entra escondido: o botão carrega a biblioteca, que aparece aqui e em Blocos e
+    // famílias, e o próximo clique já insere.
+    if st.blocos.is_empty() {
+        ui.label(RichText::new("Nenhuma família de ponto neste desenho.").color(COR_AVISO));
+        if botao_carregar_familias(ui, true, "📦 Carregar Famílias Padrão") {
+            acoes.push(Acao::RodarComStatus("eletrica.bootstrap", json!({}), status_familias));
+        }
+        return;
+    }
     let Some(m) = ele::biblioteca::modelo(uid) else { return };
     let Some(bloco) = st.blocos.iter().find(|b| b.nome.eq_ignore_ascii_case(&m.bloco)) else { return };
     let tem = |tag: &str| bloco.atributos.iter().any(|a| !a.constante && a.tag.eq_ignore_ascii_case(tag));
@@ -3087,7 +3118,7 @@ fn janela_blocos(ui: &mut egui::Ui, t: &Tokens, st: &Estado, b: &mut Blocos, tem
         let nome = b.nome.trim().to_string();
         let existe = st.blocos.iter().any(|x| x.nome.eq_ignore_ascii_case(&nome));
         let pronto = tem_desenho && !nome.is_empty() && !existe;
-        let botao = egui::Button::new(RichText::new("+ Criar novo bloco elétrico").strong().color(Color32::WHITE))
+        let botao = egui::Button::new(RichText::new("+ Criar Nova Família").strong().color(Color32::WHITE))
             .fill(Tokens::get().accent)
             .min_size(vec2(210.0, 26.0));
         let dica = if existe {
@@ -3108,7 +3139,13 @@ fn janela_blocos(ui: &mut egui::Ui, t: &Tokens, st: &Estado, b: &mut Blocos, tem
             acoes.push(Acao::Fechar(Qual::Blocos));
             b.nome.clear();
         }
+        if botao_carregar_familias(ui, tem_desenho, "📦 Carregar Famílias Padrão") {
+            acoes.push(Acao::RodarComStatus("eletrica.bootstrap", json!({ "restaurar": true }), status_familias));
+        }
     });
+    if st.blocos.is_empty() {
+        ui.label(pequeno("Nenhuma família neste desenho. Carregue a biblioteca padrão (NBR 5444 e telecom) ou crie uma família nova.", t.text_dim));
+    }
     ui.separator();
     ui.horizontal_wrapped(|ui| {
         for f in FiltroPontos::TODOS {
@@ -4930,12 +4967,10 @@ fn aba_alturas(ui: &mut egui::Ui, t: &Tokens, s: &mut Setup) {
 }
 
 fn aba_geral(ui: &mut egui::Ui, t: &Tokens, s: &mut Setup, tem_desenho: bool, acoes: &mut Vec<Acao>) {
-    if ui
-        .add_enabled(tem_desenho, egui::Button::new("Inicializar projeto no DXF atual"))
-        .on_hover_text("Cria as camadas e os blocos que faltam; as ferramentas fazem isso sozinhas na primeira vez")
-        .clicked()
-    {
-        acoes.push(Acao::Rodar("eletrica.bootstrap", json!({ "restaurar": true })));
+    ui.checkbox(&mut s.carregar_familias_padrao, "Carregar biblioteca de famílias padrão automaticamente ao iniciar um novo projeto")
+        .on_hover_text("Um desenho novo já nasce em metros (1 un = 1 m) com as famílias padrão, em Blocos e famílias e em Inserir pontos. Desmarcado, elas só entram pelo botão abaixo");
+    if botao_carregar_familias(ui, tem_desenho, "📦 Carregar / Restaurar Famílias Padrão (NBR 5444 / Telecom)") {
+        acoes.push(Acao::RodarComStatus("eletrica.bootstrap", json!({ "restaurar": true }), status_familias));
     }
     ui.add_space(4.0);
     egui::Grid::new("ele-setup-geral").num_columns(2).spacing(vec2(12.0, 6.0)).show(ui, |ui| {
@@ -4965,6 +5000,21 @@ fn aba_geral(ui: &mut egui::Ui, t: &Tokens, s: &mut Setup, tem_desenho: bool, ac
         ui.end_row();
     });
     ui.label(pequeno("Os eletrodutos correm no teto, no piso ou na parede; cada ponta desce ou sobe até a altura do bloco.", t.text_dim));
+}
+
+/// O botão que carrega a biblioteca de famílias padrão no desenho aberto. Devolve se foi clicado.
+fn botao_carregar_familias(ui: &mut egui::Ui, tem_desenho: bool, rotulo: &str) -> bool {
+    ui.add_enabled(tem_desenho, egui::Button::new(rotulo))
+        .on_hover_text(
+            "Põe no desenho as famílias de fábrica (tomadas, interruptores, pontos de luz, quadros, caixas, prumadas, dados e rack) que faltam, traz de volta as excluídas e devolve ao tamanho certo, em metros, as que foram feitas noutra unidade",
+        )
+        .on_disabled_hover_text("Abra ou crie um desenho")
+        .clicked()
+}
+
+/// A mensagem da barra de status depois de carregar as famílias padrão.
+fn status_familias(v: &Value) -> String {
+    format!("Famílias padrão carregadas: {} blocos de ponto no desenho", v["blocos"].as_u64().unwrap_or(0))
 }
 
 /// A fonte dos textos no desenho: as predefinidas primeiro (todas com acentos) e, embaixo, todas as TrueType e

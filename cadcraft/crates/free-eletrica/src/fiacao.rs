@@ -782,6 +782,29 @@ fn nome_do_bloco(eletroduto: Handle) -> String {
     format!("{PREFIXO_TAG}{}", eletroduto.hex())
 }
 
+/// As marcas da fiação estão todas no desenho, no desenho atual e na escala dele: [`garantir_blocos`] não
+/// mudaria nenhuma.
+pub fn marcas_em_dia(doc: &Drawing, m: f64) -> bool {
+    TipoCondutor::TODOS.iter().all(|t| doc.blocks.get(t.bloco()).is_some_and(|b| !bloco_padrao_antigo(b, *t, m) && !marca_noutra_escala(b, *t, m)))
+}
+
+/// A marca do desenho tem mais de 3 vezes (ou menos de um terço) o tamanho da de fábrica em metros: foi criada
+/// noutra unidade (o desenho estava em polegadas e passou para metros) e é refeita.
+fn marca_noutra_escala(b: &Block, tipo: TipoCondutor, m: f64) -> bool {
+    let altura = |pts: &mut dyn Iterator<Item = f64>| {
+        let v: Vec<f64> = pts.collect();
+        let (lo, hi) = v.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), y| (lo.min(*y), hi.max(*y)));
+        hi - lo
+    };
+    let esperado = altura(&mut tipo.tracos().into_iter().flat_map(|(a, c)| [a.1, c.1]));
+    let real =
+        altura(&mut b.entities.iter().filter_map(|e| if let EntityKind::Line(l) = &e.kind { Some([l.a.y, l.b.y]) } else { None }).flatten()) * m;
+    if !(esperado.is_finite() && esperado > 1e-9 && real.is_finite() && real > 1e-12) {
+        return false;
+    }
+    !(1.0 / 3.0..=3.0).contains(&(real / esperado))
+}
+
 /// Cria os blocos das marcas que o desenho ainda não tem, com o desenho padrão
 /// ([`TipoCondutor`]), e a camada `ELE-FIACAO` (cor 7, traço 0,35 mm). `m` = metros por unidade.
 pub fn garantir_blocos(doc: &mut Drawing, m: f64) {
@@ -789,6 +812,7 @@ pub fn garantir_blocos(doc: &mut Drawing, m: f64) {
     for tipo in TipoCondutor::TODOS {
         if let Some(b) = doc.blocks.get(tipo.bloco())
             && !bloco_padrao_antigo(b, tipo, m)
+            && !marca_noutra_escala(b, tipo, m)
         {
             // O desenho atual, ou um bloco redesenhado pelo projetista: fica.
             continue;

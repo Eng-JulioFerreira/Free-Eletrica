@@ -146,7 +146,10 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("eletrica.atributo.definir", "Edit Block Attribute", run_atributo_definir)
             .params("{ponto: hex, tag, valor?: text, visivel?: bool, posicao?: [x, y]} (ALTURA follows the project's height rule) → {ponto, tag}"),
         CommandSpec::new("eletrica.bootstrap", "Prepare Electrical Drawing", run_bootstrap)
-            .params("{restaurar?: bool (also brings back the deleted factory blocks)} → creates the missing base layers and blocks: {mudou}"),
+            .params("{restaurar?: bool (also brings back the deleted factory blocks)} → loads the standard family library (NBR 5444 and telecom) at the drawing's scale: the missing base layers and blocks come in, and factory blocks made in another unit (a drawing that was in inches) go back to size, with their insertions: {mudou, blocos}"),
+        CommandSpec::new("eletrica.desenho.novo", "New Electrical Drawing", run_desenho_novo)
+            .params("{familias?: bool (default: the settings' \"load the standard families\" option)} → puts the drawing in metres (INSUNITS 6, MEASUREMENT 1: 1 unit = 1 m) and loads the standard families; the drawing stays unmodified, with no undo step: {metros, familias, blocos}")
+            .noundo(),
         CommandSpec::new("eletrica.blocos", "Electrical Point Blocks", run_blocos)
             .params("{} → [{nome, tipo, inseridos, atributos: [{tag, padrao, prompt, constante}]}]")
             .noundo(),
@@ -235,10 +238,24 @@ fn metros(s: &Session) -> Result<f64> {
     Ok(if m > 0.0 { m } else { 1.0 })
 }
 
-/// Auto-bootstrap: as camadas e os blocos base entram sem perguntar, num desenho que não os tem.
+/// O que as ferramentas precisam no desenho: o estilo de texto, as camadas, as marcas da fiação e os blocos de
+/// fábrica que já estão nele na escala certa. Nenhuma família entra escondida: elas vêm com o desenho novo
+/// ([`run_desenho_novo`]) ou pelo "Carregar Famílias Padrão" ([`carregar_familias`]).
 fn preparar(s: &mut Session) -> Result<bool> {
-    if !ele::biblioteca::falta_base(s.doc()?) {
+    let m = metros(s)?;
+    let setup = ele::setup::atual();
+    // Sem nada a fazer, não toca no desenho (nem cria um passo de desfazer).
+    if !ele::biblioteca::precisa_preparar(s.doc()?, &setup, m) {
         return Ok(false);
+    }
+    Ok(ele::biblioteca::garantir_camadas(s.doc_mut()?, &setup, m))
+}
+
+/// Carrega a biblioteca de famílias padrão (NBR 5444 e telecom) no desenho, na escala dele: as que faltam
+/// entram, as excluídas voltam (`restaurar`) e as de fábrica feitas noutra unidade voltam ao tamanho.
+fn carregar_familias(s: &mut Session, restaurar: bool) -> Result<bool> {
+    if restaurar {
+        ele::biblioteca::restaurar_base(s.doc_mut()?);
     }
     let m = metros(s)?;
     Ok(ele::biblioteca::garantir_base(s.doc_mut()?, &ele::setup::atual(), m))
@@ -907,10 +924,33 @@ fn run_setup(_s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn run_bootstrap(s: &mut Session, p: &Value) -> Result<Value> {
-    if p.get("restaurar").and_then(Value::as_bool).unwrap_or(false) {
-        ele::biblioteca::restaurar_base(s.doc_mut()?);
+    let restaurar = p.get("restaurar").and_then(Value::as_bool).unwrap_or(false);
+    let camadas = preparar(s)?;
+    let familias = carregar_familias(s, restaurar)?;
+    Ok(json!({ "mudou": camadas || familias, "blocos": ele::biblioteca::blocos(s.doc()?).len() }))
+}
+
+/// O desenho novo do Free Elétrica: em metros (1 un = 1 m) e, com a opção das configurações (ou `familias`),
+/// já com a biblioteca de famílias padrão. Não conta como mudança: o desenho continua "sem alterações" e sem
+/// passo de desfazer.
+fn run_desenho_novo(s: &mut Session, p: &Value) -> Result<Value> {
+    let familias = match p.get("familias") {
+        None | Some(Value::Null) => ele::setup::atual().carregar_familias_padrao,
+        Some(v) => v.as_bool().ok_or_else(|| bad("eletrica.desenho.novo", "`familias` must be true or false"))?,
+    };
+    let metros_antes = ele::biblioteca::desenho_em_metros(s.doc_mut()?);
+    let setup = ele::setup::atual();
+    let m = metros(s)?;
+    ele::biblioteca::garantir_camadas(s.doc_mut()?, &setup, m);
+    if familias {
+        ele::biblioteca::garantir_base(s.doc_mut()?, &setup, m);
     }
-    Ok(json!({ "mudou": preparar(s)? }))
+    // Um desenho novo preparado assim continua "salvo": fechar sem desenhar nada não pergunta.
+    let st = s.state_mut()?;
+    st.saved = st.doc.clone();
+    st.undo.clear();
+    st.redo.clear();
+    Ok(json!({ "metros": metros_antes, "familias": familias, "blocos": ele::biblioteca::blocos(s.doc()?).len() }))
 }
 
 // ---------------------------------------------------------------- fiação e tabelas
@@ -3148,9 +3188,11 @@ fn run_ponto(s: &mut Session, p: &Value) -> Result<Value> {
         }
     }
     preparar(s)?;
-    let pai = quadro_pai(s, CMD, p)?;
     let setup = ele::setup::atual();
     let m = metros(s)?;
+    // Um bloco de fábrica pedido pelo nome entra no desenho com a família dele; as outras famílias, não.
+    ele::biblioteca::garantir_bloco_de_fabrica(s.doc_mut()?, &setup, &bloco, m);
+    let pai = quadro_pai(s, CMD, p)?;
     let mut feitos = Vec::new();
     for pos in posicoes {
         let r = if auto { ele::biblioteca::alinhar_a_parede(s.doc()?, &setup, pos, m).unwrap_or(rotacao) } else { rotacao };
@@ -3206,6 +3248,13 @@ impl PontoM {
         ele::biblioteca::blocos(s.doc().ok()?).iter().any(|b| b.nome.eq_ignore_ascii_case(&m.bloco)).then_some(m)
     }
 
+    /// O bloco com que o ELEPONTO começa: o primeiro de fábrica (a tomada baixa) ou, sem ele, o primeiro do desenho.
+    fn primeiro_bloco(s: &Session) -> Option<String> {
+        let blocos = ele::biblioteca::blocos(s.doc().ok()?);
+        let primeiro = ele::biblioteca::BLOCOS_BASE.first().copied().unwrap_or_default();
+        blocos.iter().find(|b| b.nome.eq_ignore_ascii_case(primeiro)).or(blocos.first()).map(|b| b.nome.clone())
+    }
+
     /// A rotação em `q`: a da parede, se for automática e houver uma ali, mais o giro.
     fn rotacao(&self, s: &Session, m: &ele::biblioteca::Modelo, q: [f64; 2]) -> f64 {
         let parede = m
@@ -3224,11 +3273,12 @@ impl Interactive for PontoM {
         preparar(s)?;
         // Sem nada escolhido, começa pelo primeiro bloco base: o clique já insere.
         if Self::modelo(s).is_none() {
-            let primeiro = ele::biblioteca::BLOCOS_BASE[0].to_string();
-            let nome = ele::biblioteca::blocos(s.doc()?).into_iter().map(|b| b.nome).find(|n| n.eq_ignore_ascii_case(&primeiro));
-            let Some(bloco) = nome.or_else(|| ele::biblioteca::blocos(s.doc().ok()?).into_iter().next().map(|b| b.nome)) else {
-                s.echo("O desenho não tem blocos de ponto elétrico.");
-                return Ok(Step::Done);
+            let Some(bloco) = Self::primeiro_bloco(s) else {
+                // Nada é carregado escondido: a mini-barra oferece o "Carregar Famílias Padrão".
+                s.echo(
+                    "O desenho não tem famílias de pontos: use Carregar Famílias Padrão (na mini-barra, em Blocos e famílias ou nas Configurações).",
+                );
+                return Ok(Step::Continue);
             };
             ele::biblioteca::definir_modelo(s.state()?.uid, Some(ele::biblioteca::Modelo { bloco, rotacao_auto: true, ..Default::default() }));
         }
@@ -3283,7 +3333,19 @@ impl Interactive for PontoM {
             }
             return Ok(Step::Continue);
         }
-        let Some(m) = Self::modelo(s) else { return Ok(Step::Done) };
+        // As famílias carregadas com o comando correndo (pela mini-barra): o primeiro bloco já vale para o clique.
+        if Self::modelo(s).is_none()
+            && let Some(bloco) = Self::primeiro_bloco(s)
+        {
+            ele::biblioteca::definir_modelo(s.state()?.uid, Some(ele::biblioteca::Modelo { bloco, rotacao_auto: true, ..Default::default() }));
+        }
+        let Some(m) = Self::modelo(s) else {
+            if matches!(i, Input::Enter) {
+                return Ok(Step::Done);
+            }
+            s.echo("Carregue as famílias padrão antes de inserir pontos.");
+            return Ok(Step::Continue);
+        };
         if self.pedindo_rotacao {
             self.pedindo_rotacao = false;
             if let Input::Text(t) | Input::Keyword(t) = &i

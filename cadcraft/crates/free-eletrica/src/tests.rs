@@ -1559,6 +1559,44 @@ fn clicar_no_meio_divide_e_insere_caixa() {
 }
 
 #[test]
+fn familias_feitas_em_polegadas_voltam_ao_tamanho_em_metros() {
+    let setup = Setup::default();
+    // O CADCraft cria o desenho em polegadas: as famílias saem 39,37 vezes maiores que em metros.
+    let mut d = Drawing::new_imperial();
+    assert!(biblioteca::desenho_em_branco(&d));
+    let pol = setup.unidade.metros(d.header.i64("INSUNITS", 0)).0;
+    assert!(perto(pol, 0.0254, 1e-12));
+    biblioteca::garantir_base(&mut d, &setup, pol);
+    let h = biblioteca::inserir_ponto(&mut d, "ILU-OCT", [10.0, 10.0], 0.0, &[("POTENCIA".into(), "100VA".into())], &setup).unwrap();
+    let altura_texto = |d: &Drawing| textos_da_insercao(d, h).iter().find(|(t, _)| t == "POTENCIA").unwrap().1.height;
+    let antes = altura_texto(&d);
+    assert!(!biblioteca::desenho_em_branco(&d));
+    // O desenho passa para metros: os blocos ficaram grandes demais, e preparar as ferramentas os corrige.
+    assert!(biblioteca::desenho_em_metros(&mut d));
+    assert_eq!((d.header.i64("INSUNITS", 0), d.header.i64("MEASUREMENT", 0)), (6, 1));
+    let r = biblioteca::escala_errada(&d, "ILU-OCT", 1.0).expect("fora de escala");
+    assert!(perto(r, 1.0 / 0.0254, 0.01), "{r}");
+    assert!(biblioteca::precisa_preparar(&d, &setup, 1.0));
+    assert!(biblioteca::garantir_camadas(&mut d, &setup, 1.0));
+    assert!(biblioteca::BLOCOS_BASE.iter().all(|n| biblioteca::escala_errada(&d, n, 1.0).is_none()));
+    assert!(!biblioteca::precisa_preparar(&d, &setup, 1.0), "uma vez só");
+    // O ponto de luz já inserido acompanha: o símbolo de raio 0,10 m e o texto dentro dele.
+    let (min, max) = legenda::caixa_do_desenho(&d.blocks["ILU-OCT"]).unwrap();
+    assert!(perto(max[0] - min[0], 2.0 * biblioteca::RAIO_LUZ, 1e-9));
+    assert!(altura_texto(&d) < antes / 10.0 && altura_texto(&d) <= biblioteca::TEXTO_LUZ + 1e-9, "{} -> {}", antes, altura_texto(&d));
+    // As marcas da fiação também.
+    assert!(fiacao::marcas_em_dia(&d, 1.0));
+    // Um bloco de fábrica pedido pelo nome entra sozinho, sem as outras famílias.
+    let mut vazio = metros();
+    assert!(biblioteca::garantir_camadas(&mut vazio, &setup, 1.0));
+    assert!(biblioteca::blocos(&vazio).is_empty(), "preparar as ferramentas não traz famílias");
+    assert!(biblioteca::garantir_bloco_de_fabrica(&mut vazio, &setup, "qdg", 1.0));
+    assert_eq!(biblioteca::blocos(&vazio).iter().map(|b| b.nome.as_str()).collect::<Vec<_>>(), ["QDG"]);
+    assert!(!biblioteca::garantir_bloco_de_fabrica(&mut vazio, &setup, "QDG", 1.0), "já existe");
+    assert!(!biblioteca::garantir_bloco_de_fabrica(&mut vazio, &setup, "MEU-BLOCO", 1.0), "não é de fábrica");
+}
+
+#[test]
 fn bootstrap_poe_camadas_e_blocos_uma_vez_e_respeita_os_do_projetista() {
     let setup = Setup::default();
     let mut d = metros();
@@ -1568,6 +1606,8 @@ fn bootstrap_poe_camadas_e_blocos_uma_vez_e_respeita_os_do_projetista() {
     assert!(biblioteca::falta_base(&d));
     assert!(biblioteca::garantir_base(&mut d, &setup, 1.0));
     assert!(!biblioteca::falta_base(&d));
+    let fora: Vec<(&str, f64)> = biblioteca::BLOCOS_BASE.iter().filter_map(|n| biblioteca::escala_errada(&d, n, 1.0).map(|r| (*n, r))).collect();
+    assert!(fora.is_empty(), "{fora:?}");
     assert!(!biblioteca::garantir_base(&mut d, &setup, 1.0), "na segunda vez não muda nada");
     assert_eq!(d.blocks["QDG"].entities.len(), 1, "o bloco do projetista fica");
     for c in ["ELE-PONTOS", "ELE-QUADROS", "ELE-FIACAO", "ELE-ELETRODUTO-TETO", "ELE-ELETRODUTO-PISO"] {

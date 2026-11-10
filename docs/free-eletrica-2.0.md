@@ -14,7 +14,7 @@ grafo, a divisão em fases e onde a implementação se afasta do texto. A versã
 | Rede de eletrodutos | **refeita**: pontas emendadas por proximidade, derivação em T e bloco no meio da linha ligavam | grafo estrito |
 | Fiação | **refeita**: marcas apagadas e redesenhadas, perdendo o ajuste manual | tags com deslocamento guardado |
 | Interface | **refeita**: janelas flutuantes | paleta, barra de contexto, painel de baixo, sobreposição |
-| Blocos | exigia abrir o template | auto-bootstrap |
+| Blocos | exigia abrir o template | desenho novo em metros com as famílias; botão Carregar Famílias Padrão |
 
 ## Fases
 
@@ -476,6 +476,15 @@ Ajustes de interface e de prancha:
   tensão fora das do quadro, alimentador...), cada um com "Ir para o ponto", que centraliza e destaca. O disjuntor geral
   travado (50 A) com o cabo automático sobe o cabo até comportá-lo, em vez de acusar o alimentador.
 - **Lista de materiais:** Inserir Tabela na Prancha (DXF) e Exportar para Excel (.csv), lado a lado.
+
+## Desenho em metros e famílias padrão
+
+- O desenho novo nasce em metros (`INSUNITS` 6, `MEASUREMENT` 1) e, com a opção nas Configurações > Geral (marcada de
+  fábrica), já com as famílias padrão, que aparecem juntas em Blocos e famílias e em Inserir pontos.
+- O ELEPONTO e as outras ferramentas não carregam famílias escondido. O botão **📦 Carregar Famílias Padrão** fica nas
+  Configurações, em Blocos e famílias e na mini-barra do Inserir pontos, sem família no desenho.
+- Famílias de fábrica feitas com o desenho em polegadas (39,37 vezes maiores em metros) voltam ao tamanho certo, com os
+  atributos dos pontos já inseridos, e as marcas da fiação também.
 
 ## Correções da v0.4.0
 

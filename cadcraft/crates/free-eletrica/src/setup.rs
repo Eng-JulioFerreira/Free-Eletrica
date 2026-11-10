@@ -718,6 +718,9 @@ pub struct Setup {
     pub sufixo_comandos: SufixoComandos,
     /// A fonte dos textos que o programa põe no desenho.
     pub fonte_textos: FonteTexto,
+    /// Um desenho novo já nasce com a biblioteca de famílias padrão (NBR 5444 e telecom), em metros. Desligado,
+    /// as famílias só entram pelo botão "Carregar Famílias Padrão".
+    pub carregar_familias_padrao: bool,
     pub unidade: Unidade,
     /// Camadas dos eletrodutos, separadas por vírgula, com curingas `*` e `?`.
     pub camadas_eletroduto: String,
@@ -786,6 +789,7 @@ impl Setup {
             escopo_comandos: EscopoComandos::Global,
             sufixo_comandos: SufixoComandos::LetrasRepetidas,
             fonte_textos: FonteTexto::arial(),
+            carregar_familias_padrao: true,
             unidade: Unidade::default(),
             camadas_eletroduto: "*ELETRODUTO*".into(),
             camadas_piso: "*PISO*".into(),
